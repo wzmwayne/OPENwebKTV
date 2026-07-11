@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.db
+*.log
+backend/data/
+backend/bilibili_cookie.json
+player-android/.gradle/
+player-android/build/
+player-android/local.properties
+player-android/OwKPlayer-*.apk
+player-android/app/build/
+.venv/
+venv/
+.env

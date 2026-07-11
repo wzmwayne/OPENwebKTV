@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/dark_bg">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="♫  OwK 播放器"
+        android:textColor="@color/white"
+        android:textSize="16sp"
+        android:focusable="false"
+        android:paddingLeft="20dp" android:paddingTop="16dp" android:paddingRight="20dp" android:paddingBottom="8dp"/>
+
+    <ScrollView
+        android:id="@+id/scrollView"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="20dp"
+            android:paddingBottom="20dp"
+            android:addStatesFromChildren="true">
+
+            <!-- 历史记录 -->
+            <TextView
+                android:id="@+id/historyHeader"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="历史记录"
+                android:textSize="11sp"
+                android:textColor="@color/text_hint"
+                android:paddingLeft="0dp" android:paddingTop="8dp" android:paddingRight="0dp" android:paddingBottom="4dp"
+                android:focusable="false"/>
+
+            <LinearLayout
+                android:id="@+id/historySection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"/>
+
+            <!-- 发现的服务 -->
+            <TextView
+                android:id="@+id/discoveryHeader"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="发现的服务"
+                android:textSize="11sp"
+                android:textColor="@color/text_hint"
+                android:paddingLeft="0dp" android:paddingTop="12dp" android:paddingRight="0dp" android:paddingBottom="4dp"
+                android:focusable="false"/>
+
+            <LinearLayout
+                android:id="@+id/discoverySection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"/>
+
+            <TextView
+                android:id="@+id/scanStatus"
+                android:layout_width="match_parent"
+                android:layout_height="36dp"
+                android:gravity="center"
+                android:textSize="12sp"
+                android:textColor="@color/text_hint"
+                android:focusable="false"/>
+
+            <!-- 手动输入 -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="手动输入"
+                android:textSize="11sp"
+                android:textColor="@color/text_hint"
+                android:paddingLeft="0dp" android:paddingTop="12dp" android:paddingRight="0dp" android:paddingBottom="4dp"
+                android:focusable="false"/>
+
+            <EditText
+                android:id="@+id/ipInput"
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:inputType="phone"
+                android:digits="0123456789."
+                android:maxLines="1"
+                android:textSize="16sp"
+                android:textColor="@color/white"
+                android:textColorHint="@color/text_hint"
+                android:gravity="center"
+                android:hint="输入服务器 IP"
+                android:background="@drawable/input_bg"
+                android:padding="8dp"/>
+
+            <Button
+                android:id="@+id/connectBtn"
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:layout_marginTop="8dp"
+                android:text="连接"
+                android:textSize="14sp"
+                android:textColor="@color/white"
+                android:backgroundTint="@color/purple_primary"
+                android:enabled="false"/>
+
+        </LinearLayout>
+    </ScrollView>
+
+</LinearLayout>

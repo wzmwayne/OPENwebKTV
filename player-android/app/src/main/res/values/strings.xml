@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OwK 播放器</string>
+    <string name="hint_ip">输入服务器 IP 地址</string>
+    <string name="btn_connect">连接</string>
+    <string name="scanning">扫描中…</string>
+    <string name="connected">已连接</string>
+    <string name="failed">连接失败，请检查 IP</string>
+</resources>

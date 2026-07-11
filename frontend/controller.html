@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>OwK 控制器</title>
+<script src="/js/ws_client.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  background:#0a0a0f;color:#e0e0e0;max-width:480px;margin:0 auto;padding:56px 0 64px;min-height:100vh
+}
+.header{position:fixed;top:0;left:0;right:0;max-width:480px;margin:0 auto;z-index:10;
+  padding:12px 16px;background:#14141f;border-bottom:1px solid #2a2a3a;display:flex;align-items:center;gap:12px}
+.header h1{font-size:18px;color:#7c5cfc}
+.header .badge{margin-left:auto;font-size:10px;padding:3px 8px;border-radius:8px;background:#1a2a1a;color:#8f8}
+.badge.dc{background:#2a1a1a;color:#f88}
+
+.search-bar{padding:10px 16px}
+.search-bar input{width:100%;padding:10px 14px;border-radius:8px;border:1px solid #2a2a3a;
+  background:#14141f;color:#e0e0e0;font-size:15px;outline:none}
+.search-bar input:focus{border-color:#7c5cfc}
+.search-bar .hint{font-size:11px;color:rgba(255,255,255,.25);margin-top:6px;text-align:center}
+
+.result-item{display:flex;gap:10px;padding:10px 16px;border-bottom:1px solid #14141f}
+.result-item img{width:56px;height:42px;border-radius:6px;object-fit:cover;background:#2a2a3a;flex-shrink:0}
+.result-info{flex:1;min-width:0}
+.result-info .rtitle{font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.result-info .rauthor{font-size:11px;color:rgba(255,255,255,.35)}
+.result-info .rmeta{font-size:10px;color:rgba(255,255,255,.28);margin-top:1px}
+.result-actions{display:flex;gap:4px;align-items:center;flex-shrink:0}
+.btn-icon{width:30px;height:30px;border-radius:50%;border:none;font-size:16px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.btn-primary{background:#7c5cfc;color:#fff}
+.btn-outline{background:transparent;border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.5);font-size:13px}
+.btn-sm{padding:6px 14px;border-radius:6px;border:none;font-size:12px;cursor:pointer}
+.btn-ghost{background:transparent;color:#7c5cfc}
+
+.playing-card{background:#1a1a2a;border:1px solid #2a2a3a;border-radius:10px;margin:10px 16px;padding:14px}
+.playing-card .pc-title{font-size:15px;font-weight:bold;color:#fff}
+.playing-card .pc-artist{font-size:12px;color:rgba(255,255,255,.35);margin-top:1px}
+.playing-card .pc-progress{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11px;color:rgba(255,255,255,.35)}
+.playing-card .pc-progress input{flex:1;accent-color:#7c5cfc;height:4px;cursor:pointer}
+.playing-card .pc-btns{display:flex;justify-content:center;gap:24px;margin-top:10px}
+.playing-card .pc-btns button{background:none;border:none;color:#fff;font-size:26px;cursor:pointer;
+  width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center}
+.playing-card .pc-btns button:active{background:rgba(255,255,255,.08)}
+.playing-card .pc-btns .pc-play{background:#7c5cfc;font-size:30px}
+
+.section-title{font-size:13px;font-weight:bold;padding:12px 16px 6px;color:rgba(255,255,255,.4);
+  display:flex;justify-content:space-between}
+
+.queue-item{display:flex;align-items:center;padding:8px 16px;border-bottom:1px solid #14141f;gap:8px}
+.queue-item .qidx{width:20px;font-size:11px;color:rgba(255,255,255,.25);flex-shrink:0;text-align:center}
+.queue-item .qinfo{flex:1;min-width:0}
+.queue-item .qinfo .qtitle{font-size:12px;color:#fff}
+.queue-item .qinfo .qmeta{font-size:10px;color:rgba(255,255,255,.25)}
+.queue-item .qdel{background:none;border:none;color:#f44;font-size:16px;cursor:pointer;padding:2px}
+.queue-item .qmv{background:none;border:none;color:rgba(255,255,255,.25);font-size:14px;cursor:pointer;padding:2px 4px}
+.queue-item .qmv:hover{color:#7c5cfc}
+.vol-row{display:flex;align-items:center;gap:8px;margin:8px 16px 4px;font-size:11px;color:rgba(255,255,255,.35)}
+.vol-row input{flex:1;accent-color:#7c5cfc;height:4px;cursor:pointer}
+.ls-error{color:#f88!important}
+.ls-error::before{content:"⚠ ";color:#f88}
+.queue-item.playing .qidx{color:#7c5cfc}
+.queue-item.playing .qtitle{color:#7c5cfc}
+
+.tabs{position:fixed;bottom:0;left:0;right:0;max-width:480px;margin:0 auto;
+  display:flex;background:#14141f;border-top:1px solid #2a2a3a;z-index:10}
+.tabs button{flex:1;padding:10px 4px;background:none;border:none;
+  color:rgba(255,255,255,.35);font-size:11px;cursor:pointer;text-align:center;transition:color .2s}
+.tabs button .tab-icon{font-size:18px;display:block;margin-bottom:2px}
+.tabs button.active{color:#7c5cfc}
+.tab-content{display:none}
+.tab-content.active{display:block}
+
+.hidden{display:none}
+
+/* download progress */
+.dl-item{display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid #14141f;gap:10px}
+.dl-item .dl-info{flex:1;min-width:0}
+.dl-item .dl-info .dl-title{font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dl-item .dl-info .dl-bar-wrap{background:#2a2a3a;border-radius:4px;height:6px;margin-top:6px;overflow:hidden}
+.dl-item .dl-info .dl-bar{height:100%;background:#7c5cfc;border-radius:4px;transition:width .5s}
+.dl-item .dl-pct{font-size:11px;color:rgba(255,255,255,.4);flex-shrink:0;width:36px;text-align:right}
+.dl-empty{padding:24px 16px;text-align:center;color:rgba(255,255,255,.2);font-size:13px}
+
+.local-song{display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid #14141f;gap:10px}
+.local-song .ls-info{flex:1;min-width:0}
+.local-song .ls-info .ls-title{font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.local-song .ls-info .ls-meta{font-size:11px;color:rgba(255,255,255,.3)}
+
+/* settings */
+.setting-item{padding:14px 16px;border-bottom:1px solid #14141f;display:flex;justify-content:space-between;align-items:center}
+.setting-item .si-label{font-size:13px;color:#fff}
+.setting-item .si-desc{font-size:11px;color:rgba(255,255,255,.3);margin-top:2px}
+.setting-item .si-value{font-size:12px;color:rgba(255,255,255,.5)}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>OwK</h1>
+  <span class="badge" id="statusBadge">断开</span>
+</div>
+
+<!-- ════════════ Tab: 下载 ════════════ -->
+<div class="tab-content active" id="tabDownload">
+  <div class="search-bar">
+    <input type="text" id="dlSearchInput" placeholder="搜索B站视频..." autocomplete="off">
+    <div class="hint">下载歌曲时请勿刷新页面</div>
+  </div>
+  <div id="dlResults"></div>
+  <div class="section-title">下载进度</div>
+  <div id="dlProgress"></div>
+</div>
+
+<!-- ════════════ Tab: 点歌 ════════════ -->
+<div class="tab-content" id="tabPick">
+  <div class="search-bar">
+    <input type="text" id="localSearchInput" placeholder="搜索本地歌曲..." autocomplete="off">
+  </div>
+  <div id="localSongs"></div>
+</div>
+
+<!-- ════════════ Tab: 播放 ═══════════= -->
+<div class="tab-content" id="tabPlay">
+  <div class="playing-card" id="playingCard">
+    <div class="pc-title" id="nowTitle">未播放</div>
+    <div class="pc-artist" id="nowArtist"></div>
+    <div class="pc-progress">
+      <span id="nowCur">0:00</span>
+      <input type="range" id="progressBar" min="0" max="100" value="0" oninput="onSeekCtrl(this)">
+      <span id="nowTotal">0:00</span>
+    </div>
+    <div class="pc-btns">
+      <button onclick="sendControl('prev')">⏮</button>
+      <button class="pc-play" id="playCtrlBtn" onclick="togglePlayCtrl()">▶</button>
+      <button onclick="sendControl('next')">⏭</button>
+    </div>
+  </div>
+  <div class="vol-row"><span>🔈</span><input type="range" id="volSlider" min="0" max="1" step="0.05" value="0.8" oninput="onVolume(this)"><span id="volLabel">80%</span></div>
+  <div class="section-title">📋 播放队列 <span id="queueCount">0</span></div>
+  <div id="queueList"></div>
+</div>
+
+<!-- ════════════ Tab: 设置 ════════════ -->
+<div class="tab-content" id="tabSettings">
+  <div class="section-title" style="padding-bottom:4px">连接</div>
+  <div class="setting-item">
+    <div><div class="si-label">服务端地址</div><div class="si-desc">当前连接的服务器</div></div>
+    <div class="si-value" id="serverAddr">-</div>
+  </div>
+  <div class="section-title" style="padding-bottom:4px">B站账号</div>
+  <div class="setting-item">
+    <div><div class="si-label">Cookie 状态</div><div class="si-desc">用于搜索和下载B站视频</div></div>
+    <div class="si-value" id="cookieStatus">检查中...</div>
+  </div>
+  <div class="setting-item">
+    <div><div class="si-label">登录服务器</div><div class="si-desc">二维码扫码登录</div></div>
+    <div class="si-value">
+      <button class="btn-sm btn-primary" onclick="openLogin()">打开</button>
+    </div>
+  </div>
+  <div class="section-title" style="padding-bottom:4px">关于</div>
+  <div class="setting-item">
+    <div><div class="si-label">OPENwebKTV</div><div class="si-desc">版本 0.1.0</div></div>
+    <div class="si-value"></div>
+  </div>
+</div>
+
+<!-- ════════════ Tab Bar ════════════ -->
+<div class="tabs">
+  <button class="active" onclick="switchTab('download')"><span class="tab-icon">⬇</span>下载</button>
+  <button onclick="switchTab('pick')"><span class="tab-icon">🎤</span>点歌</button>
+  <button onclick="switchTab('play')"><span class="tab-icon">▶</span>播放</button>
+  <button onclick="switchTab('settings')"><span class="tab-icon">⚙</span>设置</button>
+</div>
+
+<script>
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+const ws = new WsClient('/ws/controller', onMessage);
+let state = {current:null, queue:[], status:'idle', position:0};
+let searchTimers = {dl:null, local:null};
+let localSongsCache = [];
+
+// ── WS ──────────────────────────────────────────
+ws.onConnect = () => {
+  document.getElementById('statusBadge').textContent = '已连接';
+  document.getElementById('statusBadge').className = 'badge';
+  fetchState();
+  checkCookie();
+};
+
+ws.onDisconnect = () => {
+  document.getElementById('statusBadge').textContent = '断开';
+  document.getElementById('statusBadge').className = 'badge dc';
+};
+
+function onMessage(msg) {
+  switch (msg.type) {
+    case 'state':
+      state = msg.state;
+      updateUI();
+      break;
+    case 'position':
+      state.position = msg.position;
+      if (msg.duration) state.duration = msg.duration;
+      updateProgress();
+      break;
+    case 'download_progress':
+      renderDlProgress(msg.downloads);
+      break;
+    case 'volume':
+      if (msg.volume !== undefined) {
+        document.getElementById('volSlider').value = msg.volume;
+        document.getElementById('volLabel').textContent = Math.round(msg.volume*100)+'%';
+      }
+      break;
+  }
+}
+
+// ── Tab ─────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tabs button').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab' + name.charAt(0).toUpperCase() + name.slice(1)).classList.add('active');
+  const idx = {download:0, pick:1, play:2, settings:3}[name];
+  document.querySelectorAll('.tabs button')[idx].classList.add('active');
+  if (name === 'pick') loadLocalSongs();
+}
+
+// ── REST ────────────────────────────────────────
+async function fetchState() {
+  try {
+    const r = await fetch('/api/state');
+    const s = await r.json();
+    state = s;
+    updateUI();
+  } catch(e) {}
+}
+
+async function checkCookie() {
+  try {
+    const r = await fetch('/api/search?keyword=test&page=1');
+    const el = document.getElementById('cookieStatus');
+    if (r.ok) el.textContent = '✓ 已登录';
+    else el.textContent = '✗ Cookie 无效';
+  } catch(e) {
+    document.getElementById('cookieStatus').textContent = '✗ 无法连接';
+  }
+}
+
+function openLogin() {
+  const host = location.hostname;
+  window.open(`http://${host}:8888`, '_blank');
+}
+
+// ════════════════ 下载 ═══════════════════
+
+document.getElementById('dlSearchInput').addEventListener('input', (e) => {
+  if (searchTimers.dl) clearTimeout(searchTimers.dl);
+  const q = e.target.value.trim();
+  if (q.length < 1) { document.getElementById('dlResults').innerHTML = ''; return; }
+  searchTimers.dl = setTimeout(() => doDlSearch(q), 300);
+});
+
+async function doDlSearch(keyword) {
+  const el = document.getElementById('dlResults');
+  el.innerHTML = '<div style="padding:16px;color:rgba(255,255,255,.2);text-align:center">搜索中...</div>';
+  try {
+    const r = await fetch(`/api/search?keyword=${encodeURIComponent(keyword)}&page=1`);
+    const d = await r.json();
+    renderDlResults(d.items || []);
+  } catch(e) {
+    el.innerHTML = '<div style="padding:16px;color:#f44;text-align:center">搜索失败</div>';
+  }
+}
+
+function renderDlResults(items) {
+  const el = document.getElementById('dlResults');
+  if (items.length === 0) {
+    el.innerHTML = '<div style="padding:16px;color:rgba(255,255,255,.2);text-align:center">未找到结果</div>';
+    return;
+  }
+  el.innerHTML = items.map(item => {
+    const m = Math.floor(item.duration/60), s = item.duration%60;
+    return `<div class="result-item">
+      <img src="${esc(item.cover||'')}" alt="" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 48%22><rect fill=%22%232a2a3a%22 width=%2264%22 height=%2248%22/></svg>'">
+      <div class="result-info">
+        <div class="rtitle">${esc(item.title)}</div>
+        <div class="rauthor">${esc(item.author)}</div>
+        <div class="rmeta">${m}:${s.toString().padStart(2,'0')}</div>
+      </div>
+      <div class="result-actions">
+        <button class="btn-icon btn-primary" onclick="downloadSong('${esc(item.bvid)}')">⬇</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function downloadSong(bvid) {
+  try {
+    const r = await fetch('/api/download', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({bvid})
+    });
+    const d = await r.json();
+    if (d.status === 'already_downloaded') showToast('已下载过');
+    else if (d.status === 'downloading') showToast('开始下载');
+  } catch(e) { showToast('下载失败'); }
+}
+
+function renderDlProgress(downloads) {
+  const el = document.getElementById('dlProgress');
+  const entries = Object.entries(downloads);
+  if (entries.length === 0) {
+    el.innerHTML = '<div class="dl-empty">无进行中的下载</div>';
+    return;
+  }
+  el.innerHTML = entries.map(([bvid, info]) =>
+    `<div class="dl-item">
+      <div class="dl-info">
+        <div class="dl-title">${esc(info.title||bvid)}</div>
+        <div class="dl-bar-wrap"><div class="dl-bar" style="width:${info.percent}%"></div></div>
+      </div>
+      <div class="dl-pct">${info.percent}%</div>
+    </div>`
+  ).join('');
+}
+
+// ════════════════ 点歌 ═══════════════════
+
+document.getElementById('localSearchInput').addEventListener('input', (e) => {
+  if (searchTimers.local) clearTimeout(searchTimers.local);
+  searchTimers.local = setTimeout(() => {
+    const q = e.target.value.trim().toLowerCase();
+    const filtered = q ? localSongsCache.filter(s => s.title.toLowerCase().includes(q)) : localSongsCache;
+    renderLocalSongs(filtered);
+  }, 200);
+});
+
+async function loadLocalSongs() {
+  try {
+    const r = await fetch('/api/songs?local=1');
+    const d = await r.json();
+    localSongsCache = d.songs || [];
+    renderLocalSongs(localSongsCache);
+  } catch(e) {}
+}
+
+function renderLocalSongs(songs) {
+  const el = document.getElementById('localSongs');
+  if (songs.length === 0) {
+    el.innerHTML = '<div style="padding:24px 16px;text-align:center;color:rgba(255,255,255,.2);font-size:13px">暂无已下载歌曲<br>先去下载页面下载吧</div>';
+    return;
+  }
+  el.innerHTML = songs.map(s => {
+    const m = Math.floor(s.duration/60), sec = s.duration%60;
+    const err = s.download_status === 'error' ? ' ls-error' : '';
+    return `<div class="local-song">
+      <div class="ls-info${err}" onclick="addToQueue('${esc(s.bvid)}')">
+        <div class="ls-title">${esc(s.title)}</div>
+        <div class="ls-meta">${esc(s.uploader)} · ${m}:${sec.toString().padStart(2,'0')}</div>
+      </div>
+      <div class="result-actions">
+        <button class="btn-icon btn-primary" onclick="event.stopPropagation();addToQueue('${esc(s.bvid)}')">+</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function addToQueue(bvid) {
+  try {
+    const r = await fetch('/api/queue', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({bvid})
+    });
+    if (r.ok) showToast('已加入队列');
+    else {
+      const d = await r.json();
+      showToast(d.detail === '歌曲已在队列中' ? '已在队列中' : (d.detail || '添加失败'));
+    }
+  } catch(e) { showToast('网络错误'); }
+}
+
+// ════════════════ 播放控制 ═══════════════
+
+function sendControl(action) { ws.send({type:'control', action}); }
+function togglePlayCtrl() {
+  if (state.status === 'playing') sendControl('pause');
+  else if (state.status === 'paused') sendControl('resume');
+  else sendControl('play');
+}
+function onSeekCtrl(el) {
+  const pct = parseFloat(el.value);
+  if (state.current) {
+    ws.send({type:'seek', position: pct / 100 * state.current.duration});
+  }
+}
+function onVolume(el) {
+  const v = parseFloat(el.value);
+  document.getElementById('volLabel').textContent = Math.round(v*100)+'%';
+  ws.send({type:'volume', volume:v});
+}
+
+function updateUI() {
+  document.getElementById('nowTitle').textContent = state.current ? state.current.title : '无歌曲';
+  document.getElementById('nowArtist').textContent = state.current ? (state.current.uploader||'') : '';
+  document.getElementById('playCtrlBtn').textContent = state.status === 'playing' ? '⏸' : '▶';
+  updateProgress();
+  renderQueue();
+}
+
+function updateProgress() {
+  const dur = state.current?.duration || state.duration || 1;
+  const pct = dur > 0 ? (state.position / dur * 100) : 0;
+  document.getElementById('progressBar').value = Math.min(100, Math.max(0, pct));
+  document.getElementById('nowCur').textContent = formatTime(state.position);
+  document.getElementById('nowTotal').textContent = formatTime(dur);
+}
+
+function renderQueue() {
+  const q = state.queue || [];
+  document.getElementById('queueCount').textContent = q.length;
+  const el = document.getElementById('queueList');
+  if (q.length === 0) {
+    el.innerHTML = '<div style="padding:16px;color:rgba(255,255,255,.15);text-align:center;font-size:13px">队列为空</div>';
+    return;
+  }
+  el.innerHTML = q.map((item, i) => {
+    const p = item.status === 'playing';
+    const first = i === 0;
+    const last = i === q.length - 1;
+    return `<div class="queue-item${p?' playing':''}">
+      <div class="qidx">${p?'▶':i+1}</div>
+      <div class="qinfo" onclick="${p?'':'moveToTop('+item.id+')'}" style="cursor:pointer">
+        <div class="qtitle">${item.song?.title ? esc(item.song.title) : '?'}</div>
+        <div class="qmeta">${esc(item.song?.uploader||'')}</div>
+      </div>
+      <button class="qmv" onclick="${p?'':'moveQueue('+item.id+','+(i-1)+')'}" ${p?'disabled':''}>▲</button>
+      <button class="qmv" onclick="${p?'':'moveQueue('+item.id+','+(i+1)+')'}" ${p?'disabled':''}>▼</button>
+      <button class="qdel" onclick="removeQueue(${item.id})">✕</button>
+    </div>`;
+  }).join('');
+}
+
+async function removeQueue(itemId) {
+  try { await fetch(`/api/queue/${itemId}`, {method:'DELETE'}); } catch(e) {}
+}
+async function moveQueue(itemId, toIdx) {
+  if (!state.queue) return;
+  const ids = state.queue.map(it => it.id);
+  const from = ids.indexOf(itemId);
+  if (from === -1) return;
+  ids.splice(from, 1);
+  ids.splice(toIdx, 0, itemId);
+  try { await fetch('/api/queue/reorder', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({order:ids})}); } catch(e) {}
+}
+async function moveToTop(itemId) {
+  if (!state.queue) return;
+  const ids = state.queue.map(it => it.id);
+  const from = ids.indexOf(itemId);
+  if (from < 1) return;
+  ids.splice(from, 1);
+  ids.unshift(itemId);
+  try { await fetch('/api/queue/reorder', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({order:ids})}); } catch(e) {}
+}
+
+// ── 工具 ──────────────────────────────────────
+function showToast(msg) {
+  let t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#7c5cfc;color:#fff;padding:8px 20px;border-radius:6px;font-size:13px;z-index:999;animation:tfade 2s forwards;white-space:nowrap';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2000);
+}
+
+function formatTime(s) {
+  if (!s || isNaN(s)) return '0:00';
+  const m = Math.floor(s/60), sec = Math.floor(s%60);
+  return `${m}:${sec.toString().padStart(2,'0')}`;
+}
+
+const style = document.createElement('style');
+style.textContent = '@keyframes tfade{0%{opacity:1}70%{opacity:1}100%{opacity:0}}';
+document.head.appendChild(style);
+
+document.getElementById('serverAddr').textContent = location.hostname + ':' + (location.port || (location.protocol==='https:'?'443':'80'));
+</script>
+</body>
+</html>
