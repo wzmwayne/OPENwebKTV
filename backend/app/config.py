@@ -17,6 +17,7 @@ class Settings:
     FRONTEND_DIR: str = FRONTEND_DIR
     MAX_QUEUE_SIZE: int = 50
     BILIBILI_COOKIE: str = os.path.join(BASE_DIR, "bilibili_cookie.json")
+    ADMIN_STATIC_PASSWORD: str = os.environ.get("OWK_ADMIN_PASSWORD", "1234")
 
 
 settings = Settings()

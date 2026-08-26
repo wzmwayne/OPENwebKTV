@@ -42,6 +42,7 @@ class PlayState(BaseModel):
     status: str = "idle"
     position: float = 0
     volume: float = 0.8
+    admin: dict = {}   # 高级操作全局状态(是否允许): {phase, allowed, code_ttl, admin_remaining}
 
 
 class ImportRequest(BaseModel):

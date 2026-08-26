@@ -6,6 +6,7 @@ from .models import Song, QueueItem
 from .schemas import SongOut, QueueOut, PlayState
 from .ws_manager import ws_manager
 from .config import settings
+from . import admin_auth
 
 log = logging.getLogger("owk.player")
 
@@ -52,6 +53,7 @@ class PlayerEngine:
                 status=self._status,
                 position=self._position,
                 volume=self._volume,
+                admin=admin_auth.status(),   # 高级操作全局状态(是否允许)
             )
         finally:
             db.close()
@@ -62,6 +64,8 @@ class PlayerEngine:
 
     async def play(self):
         async with self._play_lock:
+            if self._status == "blocked":
+                return   # 阻塞状态(高级操作验证)不自动起播
             if not self._current_song and not await self._load_next():
                 # 队列为空: 进入空闲并广播通知前端; 探测循环(poll_loop)会持续探测新歌,
                 # 与启动时行为一致(仅在状态转换时广播, 避免每秒刷屏)
@@ -87,6 +91,8 @@ class PlayerEngine:
         log.info("⏸ 暂停")
 
     async def resume(self):
+        if self._status == "blocked":
+            return
         if self._status == "paused":
             self._status = "playing"
             await ws_manager.send_to_players({"type": "resume"})
@@ -94,6 +100,8 @@ class PlayerEngine:
             log.info("▶ 恢复播放")
 
     async def next(self):
+        if self._status == "blocked":
+            return
         db = SessionLocal()
         try:
             if self._current_song:
@@ -108,6 +116,8 @@ class PlayerEngine:
         await self.play()
 
     async def prev(self):
+        if self._status == "blocked":
+            return
         db = SessionLocal()
         try:
             if self._current_song:
@@ -169,6 +179,8 @@ class PlayerEngine:
             log.info("队列已空，停止播放")
 
     async def add_to_queue(self, song_id: int, db: Session) -> tuple[int | None, str]:
+        if self._status == "blocked":
+            return None, "blocked"   # 播放端阻塞期间拒绝点歌(维护中)
         count = db.query(QueueItem).filter(
             QueueItem.status.in_(["waiting", "playing"])
         ).count()
@@ -211,6 +223,66 @@ class PlayerEngine:
             db.query(QueueItem).filter(QueueItem.id == item_id).update({"order": i})
         db.commit()
         await self.broadcast_state()
+
+    # ── 高级操作: 阻塞状态 ──────────────────────────
+
+    async def enter_admin_block(self):
+        """进入阻塞状态(高级操作验证): 清空播放列表 + 停止当前播放"""
+        async with self._play_lock:
+            db = SessionLocal()
+            try:
+                db.query(QueueItem).filter(
+                    QueueItem.status.in_(["waiting", "playing"])
+                ).delete()
+                db.commit()
+            finally:
+                db.close()
+            self._current_song = None
+            self._position = 0
+            self._status = "blocked"
+            await self.broadcast_state()
+            log.info("⛔ 播放端进入阻塞状态(高级操作验证)")
+
+    async def release_admin_block(self):
+        """解除阻塞: 回到空闲(由状态机到期/取消触发)"""
+        async with self._play_lock:
+            if self._status != "blocked":
+                return
+            self._status = "idle"
+            await self.broadcast_state()
+            log.info("✅ 阻塞解除, 播放端回到空闲")
+
+    async def clear_queue(self):
+        """清空播放列表(高级操作): 停当前播放, 队列清空, 回空闲"""
+        async with self._play_lock:
+            db = SessionLocal()
+            try:
+                db.query(QueueItem).filter(
+                    QueueItem.status.in_(["waiting", "playing"])
+                ).delete()
+                db.commit()
+            finally:
+                db.close()
+            self._current_song = None
+            self._position = 0
+            self._status = "idle"
+            await self.broadcast_state()
+            log.info("🧹 播放列表已清空")
+
+    async def stop_current(self):
+        """停止当前播放(如删除正在播放的歌曲): 播下一首或回空闲"""
+        db = SessionLocal()
+        try:
+            if self._current_song:
+                db.query(QueueItem).filter(
+                    QueueItem.song_id == self._current_song.id,
+                    QueueItem.status == "playing",
+                ).update({"status": "played"})
+                db.commit()
+            self._current_song = None
+        finally:
+            db.close()
+        await self.play()
 
     async def _load_next(self) -> bool:
         db = SessionLocal()

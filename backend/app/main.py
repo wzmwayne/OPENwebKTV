@@ -9,7 +9,9 @@ from .config import settings, FRONTEND_DIR
 from .routers.api import router as api_router
 from .routers.ws import router as ws_router
 from .routers.login import router as login_router
+from .routers.admin import router as admin_router
 from .player_engine import player_engine
+from . import admin_auth
 
 log = logging.getLogger("owk")
 
@@ -50,6 +52,7 @@ async def startup():
     _reset_stuck_playing()
     _dedup_queue()
     player_engine.start_poll()
+    admin_auth.start_loop()   # 高级操作状态循环(到期/换码广播)
     log.info("数据库初始化完成")
     log.info(f"媒体目录: {settings.MEDIA_DIR}")
     log.info(f"前端目录: {FRONTEND_DIR}")
@@ -103,6 +106,7 @@ def _dedup_queue():
 app.include_router(api_router)
 app.include_router(ws_router)
 app.include_router(login_router)
+app.include_router(admin_router)
 
 
 @app.get("/")

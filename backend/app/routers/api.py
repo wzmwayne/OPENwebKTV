@@ -380,8 +380,12 @@ def get_queue():
 
 @router.post("/queue")
 async def add_queue(body: QueueAddRequest, db: Session = Depends(get_db)):
+    if player_engine.status == "blocked":
+        raise HTTPException(403, "系统维护中，暂时无法点歌")
     song = await _ensure_song(body.bvid, db)
     item_id, result = await player_engine.add_to_queue(song.id, db)
+    if result == "blocked":
+        raise HTTPException(403, "系统维护中，暂时无法点歌")
     if result == "full":
         raise HTTPException(400, "队列已满(上限50首)")
     if result == "exists":
@@ -492,6 +496,8 @@ async def add_playlist_song(pl_id: int, body: QueueAddRequest, db: Session = Dep
 
 @router.post("/playlists/{pl_id}/play")
 async def play_playlist(pl_id: int, db: Session = Depends(get_db)):
+    if player_engine.status == "blocked":
+        raise HTTPException(403, "系统维护中，暂时无法播放")
     items = (
         db.query(PlaylistSong).filter(PlaylistSong.playlist_id == pl_id)
         .order_by(PlaylistSong.order).all()

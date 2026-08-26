@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from ..ws_manager import ws_manager
 from ..player_engine import player_engine
+from .. import admin_auth
 
 
 router = APIRouter()
@@ -15,6 +16,10 @@ async def ws_player(ws: WebSocket):
     # 连接后立即推送当前状态, 新打开的播放器页能同步当前歌曲/播放状态
     state = player_engine.get_state()
     await ws.send_json({"type": "state", "state": state.model_dump()})
+    # 若处于高级操作验证/授权阶段, 补推 admin 消息(播放端需显示动态码; 中途重连场景)
+    ast = admin_auth.status()
+    if ast["phase"] in ("code", "active"):
+        await ws.send_json({"type": "admin", **admin_auth.status(with_code=True)})
     try:
         while True:
             raw = await ws.receive_text()

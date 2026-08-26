@@ -45,6 +45,14 @@ video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:contain}
 #loginOverlay button{margin-top:14px;background:#2a2a3a;color:#fff;border:none;
   padding:8px 22px;border-radius:8px;font-size:14px;cursor:pointer}
 #loginOverlay button:hover{background:#7c5cfc}
+#adminOverlay{position:fixed;top:0;left:0;width:100%;height:100%;z-index:12;
+  background:rgba(8,8,16,.93);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+#adminOverlay .ao-title{font-size:clamp(18px,3vw,30px);color:#7c5cfc;margin-bottom:24px;font-weight:bold}
+#adminOverlay .ao-code{font-size:clamp(52px,10vw,120px);font-weight:bold;color:#fff;
+  letter-spacing:14px;margin-bottom:20px;text-shadow:0 0 24px rgba(124,92,252,.55)}
+#adminOverlay .ao-sub{font-size:clamp(13px,1.8vw,18px);color:rgba(255,255,255,.55);margin-bottom:16px}
+#adminOverlay .ao-count{font-size:clamp(13px,1.8vw,18px);color:#8f8}
+#adminOverlay .ao-ok{font-size:clamp(40px,8vw,90px);color:#8f8;margin-bottom:16px}
 #coverLayer{position:fixed;top:0;left:0;width:100%;height:100%;z-index:2;
   display:flex;align-items:center;justify-content:center;background:#0a0a0f}
 .lyric-row{position:fixed;z-index:6;white-space:nowrap;max-width:88vw;overflow:hidden;
@@ -91,6 +99,12 @@ video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:contain}
   <img id="loginQrImg" alt="登录二维码">
   <div id="loginStatus" class="login-status">等待扫码...</div>
   <button onclick="refreshLoginQr()">刷新二维码</button>
+</div>
+<div id="adminOverlay" class="hidden">
+  <div class="ao-title" id="aoTitle">高级操作验证</div>
+  <div class="ao-code" id="aoCode">------</div>
+  <div class="ao-sub" id="aoSub">请在控制器输入此验证码</div>
+  <div class="ao-count" id="aoCount">剩余 120s</div>
 </div>
 <div class="status-badge" id="statusBadge">未连接</div>
 <div id="songTitle" class="hidden"></div>
@@ -344,8 +358,51 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// ── 高级操作阻塞覆盖层(全局状态驱动) ──
+let adminPhase = 'none';
+let adminCode = '';
+let adminTtl = 0;
+let adminTimer = null;
+
+function renderAdminOverlay() {
+  const ov = document.getElementById('adminOverlay');
+  if (adminPhase === 'code' || adminPhase === 'active') {
+    ov.classList.remove('hidden');
+    const title = document.getElementById('aoTitle');
+    const codeEl = document.getElementById('aoCode');
+    const sub = document.getElementById('aoSub');
+    if (adminPhase === 'code') {
+      title.textContent = '高级操作验证';
+      codeEl.className = 'ao-code';
+      codeEl.textContent = adminCode || '------';
+      sub.textContent = '请在控制器输入此验证码';
+    } else {
+      title.textContent = '高级操作授权中';
+      codeEl.className = 'ao-ok';
+      codeEl.textContent = '✓';
+      sub.textContent = '授权结束后将自动恢复空闲';
+    }
+    if (adminTimer) clearInterval(adminTimer);
+    adminTimer = setInterval(() => {
+      adminTtl--;
+      if (adminTtl <= 0) { clearInterval(adminTimer); adminTimer = null; }
+      document.getElementById('aoCount').textContent =
+        (adminPhase === 'code' ? '剩余 ' : '授权剩余 ') + Math.max(0, adminTtl) + 's';
+    }, 1000);
+  } else {
+    ov.classList.add('hidden');
+    if (adminTimer) { clearInterval(adminTimer); adminTimer = null; }
+  }
+}
+
 function onMessage(msg) {
   switch (msg.type) {
+    case 'admin':
+      adminPhase = msg.phase || 'none';
+      adminCode = msg.code || '';
+      adminTtl = (adminPhase === 'code' ? (msg.code_ttl||0) : (msg.admin_remaining||0));
+      renderAdminOverlay();
+      break;
     case 'play':
       if (msg.song) loadVideo(msg.song);
       else showIdle('请点歌播放');
@@ -363,6 +420,12 @@ function onMessage(msg) {
       if (msg.position !== undefined) video.currentTime = msg.position;
       break;
     case 'state':
+      if (msg.state?.admin) {
+        // 中途重连/状态同步: 以 state.admin 校准阻塞覆盖层(动态码由 admin 消息单独下发)
+        adminPhase = msg.state.admin.phase || 'none';
+        adminTtl = (adminPhase === 'code' ? (msg.state.admin.code_ttl||0) : (msg.state.admin.admin_remaining||0));
+        renderAdminOverlay();
+      }
       if (msg.state?.current) {
         if (!currentSong || currentSong.id !== msg.state.current.id) {
           loadVideo(msg.state.current);
@@ -370,6 +433,16 @@ function onMessage(msg) {
           if (msg.state.status === 'paused') video.pause();
           else if (msg.state.status === 'playing' && video.paused) video.play().catch(() => {});
         }
+      } else if (msg.state?.status === 'blocked') {
+        // 阻塞状态(高级操作验证): 清理画面但保留阻塞覆盖层, 不显示空闲屏
+        currentSong = null;
+        document.getElementById('songTitle').classList.add('hidden');
+        document.getElementById('coverLayer').classList.add('hidden');
+        lyrics = []; lyricIndex = -1;
+        hideLyrics();
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
       } else {
         currentSong = null;
         document.getElementById('songTitle').classList.add('hidden');

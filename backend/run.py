@@ -158,6 +158,7 @@ if __name__ == "__main__":
     print(f"  本机: http://127.0.0.1:{chose_port}")
     print(f"  播放器: http://{lan}:{chose_port}/player.html")
     print(f"  控制器: http://{lan}:{chose_port}/controller.html")
+    print(f"  高级操作静态密码: {settings.ADMIN_STATIC_PASSWORD} (环境变量 OWK_ADMIN_PASSWORD 可覆盖)")
     print("=" * 52)
     print()
 
