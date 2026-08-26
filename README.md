@@ -15,7 +15,8 @@
 | 客户端 | 需安装专用 App / 点歌机 | **纯网页**：电视用 Chrome/Edge/任意浏览器打开即可，无需安装 |
 | 遥控 | 专用遥控器/App 配对 | **手机浏览器扫码即连**，无配对、无蓝牙、无安装 |
 | 数据 | 走云端，可能被限流/断网失联 | **局域网直连**：无云端中转，已下载歌曲断外网也能播 |
-| 设备兼容 | 绑定特定硬件 | 任意电视/投影/电脑/电视盒子，可选 Android TV 壳 |
+| 设备兼容 | 绑定特定硬件 | 任意电视/投影/电脑/电视盒子，可选 Android TV 壳；**安卓机顶盒/电视/手机本身也可用 Termux 跑后端** |
+| 部署门槛 | 需购买点歌机/专用硬件 | 电脑、NAS、**甚至安卓机顶盒/电视/手机（Termux）**都能跑，方法与电脑一致 |
 | 歌词 | 单行/卡拉OK式 | **两行大屏滚动歌词**，焦点放大+黑边阴影；多来源（B站字幕/第三方 LRCLIB） |
 | 播放控制 | 基础 | 队列管理、切歌/上一首、进度拖拽、音量、空闲自动待机 |
 | 下载 | 无 | 点歌自动后台下载（DASH 音视频分离 → H.264 合并），可离线反复唱 |
@@ -92,6 +93,36 @@ OWK_ADMIN_PASSWORD=你的密码 python3 start.py
 ### 6.（可选）Android TV 壳
 
 `player-android/` 为 Kotlin 工程，需 Android SDK（Gradle 构建），构建后安装到电视即可全屏加载 player.html，支持同网段自动扫描服务器。
+
+### 7.（可选）安卓机顶盒 / 电视 / 手机：用 Termux 部署
+
+后端是纯 Python + ffmpeg，**任何能装 Termux 的安卓设备**都可以当服务器，方法跟电脑一模一样：
+
+```bash
+# 1. 安装 Termux（建议用 F-Droid 版本，勿用 Play 商店旧版），然后：
+pkg update && pkg upgrade
+pkg install python ffmpeg git
+
+# 2. 获取项目
+git clone https://github.com/wzmwayne/OPENwebKTV.git
+cd OPENwebKTV
+
+# 3. 安装依赖
+pip install -r backend/requirements.txt
+
+# 4. 启动（与电脑完全相同）
+python start.py
+```
+
+注意事项：
+
+- **保持后台运行**：Android 12+ 对后台进程限制严格，Termux 请保持在前台，或安装 `termux-wake-lock` 保活：
+  ```bash
+  pkg install termux-api && termux-wake-lock
+  ```
+- **同机自用**：手机/机顶盒自己当服务器时，直接浏览器打开 `http://127.0.0.1:8080/player.html`（电视大屏）和 `http://127.0.0.1:8080/controller.html`（手机遥控）；其他设备用启动时打印的 `http://<本机IP>:8080` 访问
+- **媒体目录**：默认存在项目 `backend/data/media/`，无需额外存储权限；想下载到共享存储可 `termux-setup-storage` 后自行调整路径
+- **性能**：机顶盒/手机跑下载合并（ffmpeg）会比电脑慢，但播放完全无压力；电视盒注意散热
 
 ---
 
