@@ -310,13 +310,14 @@ async def _run_download(song_id: int, bvid: str, track: int = 0, keyword: str = 
                     lyrics_json = _lines_to_json(lrclines)
                 except Exception as e:
                     log.warning(f"LRCLIB歌词下载失败 {bvid}: {e}")
-            # track == -1: 不带歌词
+            # track == -1: 不带歌词 → 写入显式无歌词标记 '[]'
+            # ('[]' 与 '' 语义不同: '' 会被 /api/lyrics 回落B站/第三方兜底显示歌词, '[]' 强制无歌词)
         db = SessionLocal()
         s = db.query(Song).filter(Song.id == song_id).first()
         if s:
             s.file_path = path
             s.file_size = size
-            s.lyrics = lyrics_json
+            s.lyrics = "[]" if track == -1 else lyrics_json
             # 用 ffprobe 判定是否含视频轨；纯音频文件标记为 audio_only
             s.download_status = "ready" if _has_video_stream(path) else "audio_only"
             db.commit()

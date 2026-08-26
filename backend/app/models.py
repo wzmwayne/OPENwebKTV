@@ -16,7 +16,7 @@ class Song(Base):
     file_path = Column(String(500), default="")
     file_size = Column(BigInteger, default=0)
     download_status = Column(String(20), default="pending")
-    lyrics = Column(Text, default="")   # 下载时同时保存的歌词(JSON: [{start,end,text}])
+    lyrics = Column(Text, default="")   # 下载时同时保存的歌词(JSON: [{start,end,text}]); '[]'=显式无歌词(不回落兜底), ''=未存储(会回落B站/第三方)
     search_keyword = Column(String(100), default="")   # 用户搜索词(LRCLIB歌词查询用)
     created_at = Column(DateTime, default=datetime.utcnow)
 

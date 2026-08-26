@@ -439,6 +439,10 @@ function onMessage(msg) {
     case 'seek':
       if (msg.position !== undefined) video.currentTime = msg.position;
       break;
+    case 'lyrics_changed':
+      // 歌词被删除/重置: 若正播这首歌则重新拉取(即时生效, 不影响播放)
+      if (currentSong && currentSong.bvid === msg.bvid) loadLyrics(msg.bvid, loadGen);
+      break;
     case 'state':
       if (msg.state?.admin) {
         // 中途重连/状态同步: 以 state.admin 校准阻塞覆盖层(动态码由 admin 消息单独下发)

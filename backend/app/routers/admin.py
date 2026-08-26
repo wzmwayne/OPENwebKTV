@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from .. import admin_auth
 from ..database import SessionLocal
 from ..models import Song, QueueItem, PlaylistSong
-from .api import clear_lyrics_cache
+from .api import clear_lyrics_cache, LYRICS_CACHE, COVER_CACHE
 from ..player_engine import player_engine
 from ..ws_manager import ws_manager
 
@@ -92,6 +92,40 @@ async def admin_clear_queue():
     """清空播放列表"""
     await player_engine.clear_queue()
     return {"status": "ok"}
+
+
+@router.delete("/songs/{song_id}/lyrics")
+async def admin_clear_song_lyrics(song_id: int):
+    """删除歌曲歌词: 存储置为无歌词 + 清除该 bvid 全部歌词缓存。
+    Song.lyrics='[]' 是显式"无歌词"标记(区别于 ''=未存储, 会回落B站/第三方兜底):
+    /api/lyrics track<0 时 json.loads('[]')=[] 直接返回空, 不显示任何来源歌词。
+    正在播放这首歌时广播 lyrics_changed 给播放端, 即时刷新歌词显示。"""
+    db = SessionLocal()
+    try:
+        song = db.query(Song).filter(Song.id == song_id).first()
+        if not song:
+            raise HTTPException(404, "歌曲不存在")
+        bvid = song.bvid
+        song.lyrics = "[]"          # 显式无歌词
+        db.commit()
+        clear_lyrics_cache(bvid)    # 内存缓存(B站轨/LRCLIB搜索词/标题)全部清除
+        if player_engine.current_song and player_engine.current_song.id == song_id:
+            await ws_manager.send_to_players({"type": "lyrics_changed", "bvid": bvid})
+        log.info(f"已删除歌词(设为无歌词): {song.title} (id={song_id})")
+        return {"status": "ok"}
+    finally:
+        db.close()
+
+
+@router.post("/cache/clear")
+async def admin_clear_cache():
+    """清除所有内存缓存(歌词/封面代理), 不影响使用(下次请求自动重建)"""
+    n_lyrics = len(LYRICS_CACHE)
+    n_cover = len(COVER_CACHE)
+    LYRICS_CACHE.clear()
+    COVER_CACHE.clear()
+    log.info(f"已清除内存缓存: 歌词{n_lyrics}条 / 封面{n_cover}条")
+    return {"status": "ok", "cleared": {"lyrics": n_lyrics, "cover": n_cover}}
 
 
 @router.delete("/songs/{song_id}")

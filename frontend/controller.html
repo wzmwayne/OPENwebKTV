@@ -289,6 +289,8 @@ body{
         <button onclick="adminLogout()">🚪 退出登录B站<div class="op-desc">删除本地B站Cookie，播放端回到扫码状态</div></button>
         <button onclick="adminClearQueue()">🧹 清空播放列表<div class="op-desc">停止播放并清空当前队列</div></button>
         <button onclick="adminGoDeleteSongs()">🗑 删除本地歌曲<div class="op-desc">前往点歌页，授权期间歌曲旁显示删除按钮</div></button>
+        <button onclick="adminGoClearLyrics()">🎵 删除歌曲歌词<div class="op-desc">前往点歌页，授权期间歌曲旁显示删除歌词按钮</div></button>
+        <button onclick="adminClearCache()">💨 清除缓存<div class="op-desc">清理歌词/封面内存缓存，不影响使用</div></button>
       </div>
       <div class="ap-btns">
         <button class="btn-danger" onclick="adminCancel()">结束授权</button>
@@ -541,6 +543,35 @@ function adminGoDeleteSongs() {
   switchTab('pick');
   loadLocalSongs();
   showToast('授权期间，本地歌曲旁显示删除按钮');
+}
+
+function adminGoClearLyrics() {
+  closeAdminPanel();
+  switchTab('pick');
+  loadLocalSongs();
+  showToast('授权期间，本地歌曲旁显示删除歌词按钮');
+}
+
+async function clearSongLyrics(id, title) {
+  if (!adminState.allowed) { showToast('高级操作已过期，请重新验证'); return; }
+  if (!confirm(`确定删除《${title}》的歌词？将设为无歌词`)) return;
+  try {
+    const r = await fetch('/api/admin/songs/' + id + '/lyrics', {method:'DELETE'});
+    if (r.ok) showToast('已设为无歌词');
+    else { const d = await r.json().catch(() => ({})); showToast(d.detail || '操作失败'); }
+  } catch(e) { showToast('网络错误'); }
+}
+
+async function adminClearCache() {
+  if (!adminState.allowed) { showToast('高级操作已过期，请重新验证'); return; }
+  if (!confirm('确定清除所有缓存？(歌词/封面缓存，不影响使用)')) return;
+  try {
+    const r = await fetch('/api/admin/cache/clear', {method:'POST'});
+    if (r.ok) {
+      const d = await r.json();
+      showToast('缓存已清除(歌词' + ((d.cleared && d.cleared.lyrics) || 0) + '条/封面' + ((d.cleared && d.cleared.cover) || 0) + '条)');
+    } else showToast('操作失败');
+  } catch(e) { showToast('网络错误'); }
 }
 
 async function deleteLocalSong(id, title) {
@@ -819,6 +850,7 @@ function renderLocalSongs(songs) {
       </div>
       <div class="result-actions">
         <button class="btn-icon btn-primary" onclick="event.stopPropagation();addToQueue('${esc(s.bvid)}')">+</button>
+        <button class="btn-icon ls-del hidden" title="删除歌词(设为无歌词)" onclick="event.stopPropagation();clearSongLyrics(${s.id},'${esc(s.title.replace(/'/g,"\\'"))}')">🎵</button>
         <button class="btn-icon ls-del hidden" title="删除歌曲" onclick="event.stopPropagation();deleteLocalSong(${s.id},'${esc(s.title.replace(/'/g,"\\'"))}')">🗑</button>
       </div>
     </div>`;
