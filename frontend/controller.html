@@ -16,6 +16,11 @@ body{
 .header h1{font-size:18px;color:#7c5cfc}
 .header .badge{margin-left:auto;font-size:10px;padding:3px 8px;border-radius:8px;background:#1a2a1a;color:#8f8}
 .badge.dc{background:#2a1a1a;color:#f88}
+#loginBanner{position:fixed;top:56px;left:0;right:0;max-width:480px;margin:0 auto;z-index:9;
+  background:#2a1a08;color:#ffd;font-size:13px;padding:10px 16px;text-align:center;
+  border-bottom:1px solid #4a3010;display:none}
+#loginBanner button{margin-left:8px;background:#7c5cfc;color:#fff;border:none;
+  border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer}
 
 .search-bar{padding:10px 16px}
 .search-bar input{width:100%;padding:10px 14px;border-radius:8px;border:1px solid #2a2a3a;
@@ -104,6 +109,7 @@ body{
   <h1>OwK</h1>
   <span class="badge" id="statusBadge">断开</span>
 </div>
+<div id="loginBanner">⚠ B站未登录 — 请在播放端(电视)屏幕扫码登录<button onclick="dismissLoginBanner()">知道了</button></div>
 
 <!-- ════════════ Tab: 下载 ════════════ -->
 <div class="tab-content active" id="tabDownload">
@@ -192,7 +198,36 @@ ws.onConnect = () => {
   document.getElementById('statusBadge').className = 'badge';
   fetchState();
   checkCookie();
+  checkLogin();
 };
+
+// ── B站登录提示: 未登录时显示提示条, 扫码登录成功后自动隐藏 ──
+let loginCheckTimer = null;
+let bannerDismissed = false;
+
+async function checkLogin() {
+  try {
+    const r = await fetch('/api/login/status');
+    const d = await r.json();
+    const banner = document.getElementById('loginBanner');
+    if (!d.logged_in) {
+      if (!bannerDismissed) banner.style.display = 'block';
+      if (!loginCheckTimer) loginCheckTimer = setInterval(checkLogin, 5000);
+    } else {
+      const wasHidden = banner.style.display === 'none';
+      banner.style.display = 'none';
+      if (loginCheckTimer) { clearInterval(loginCheckTimer); loginCheckTimer = null; }
+      if (!wasHidden) showToast('B站登录成功');
+    }
+  } catch(e) {}
+}
+
+function dismissLoginBanner() {
+  bannerDismissed = true;
+  document.getElementById('loginBanner').style.display = 'none';
+}
+
+checkLogin();
 
 ws.onDisconnect = () => {
   document.getElementById('statusBadge').textContent = '断开';

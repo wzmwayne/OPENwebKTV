@@ -8,6 +8,7 @@ from .database import init_db
 from .config import settings, FRONTEND_DIR
 from .routers.api import router as api_router
 from .routers.ws import router as ws_router
+from .routers.login import router as login_router
 from .player_engine import player_engine
 
 log = logging.getLogger("owk")
@@ -81,6 +82,7 @@ def _dedup_queue():
 
 app.include_router(api_router)
 app.include_router(ws_router)
+app.include_router(login_router)
 
 
 @app.get("/")

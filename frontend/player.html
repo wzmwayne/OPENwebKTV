@@ -34,6 +34,17 @@ video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:contain}
   background:#fff;padding:8px;box-shadow:0 0 24px rgba(124,92,252,.35)}
 #idleScreen .idle-qr .ql{font-size:clamp(11px,1.4vw,15px);color:rgba(255,255,255,.4);margin-top:8px}
 #idleScreen.hidden{display:none}
+#loginOverlay{position:fixed;top:0;left:0;width:100%;height:100%;z-index:11;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  background:#0a0a0f;color:#fff}
+#loginOverlay .login-title{font-size:clamp(18px,3vw,30px);color:#7c5cfc;margin-bottom:6px}
+#loginOverlay .login-sub{font-size:clamp(12px,1.6vw,16px);color:rgba(255,255,255,.4);margin-bottom:22px}
+#loginOverlay img{width:clamp(150px,24vw,240px);background:#fff;padding:10px;border-radius:12px}
+#loginOverlay .login-status{margin-top:16px;font-size:clamp(13px,1.8vw,18px);color:#8f8}
+#loginOverlay .login-status.expired{color:#f88}
+#loginOverlay button{margin-top:14px;background:#2a2a3a;color:#fff;border:none;
+  padding:8px 22px;border-radius:8px;font-size:14px;cursor:pointer}
+#loginOverlay button:hover{background:#7c5cfc}
 #coverLayer{position:fixed;top:0;left:0;width:100%;height:100%;z-index:2;
   display:flex;align-items:center;justify-content:center;background:#0a0a0f}
 #coverLayer img{width:min(60vw,60vh);border-radius:12px;box-shadow:0 0 40px rgba(0,0,0,.6)}
@@ -59,6 +70,13 @@ video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:contain}
 <div id="unmuteHint">按 回车 / OK / 空格 开启声音</div>
 
 <div id="qrWrap"><img id="qrImg" src="/api/qr/controller" alt="QR"><div class="ql">扫码控制</div></div>
+<div id="loginOverlay" class="hidden">
+  <div class="login-title">请扫码登录B站</div>
+  <div class="login-sub">登录后即可搜索与下载歌曲</div>
+  <img id="loginQrImg" alt="登录二维码">
+  <div id="loginStatus" class="login-status">等待扫码...</div>
+  <button onclick="refreshLoginQr()">刷新二维码</button>
+</div>
 <div class="status-badge" id="statusBadge">未连接</div>
 <div id="songTitle" class="hidden"></div>
 
@@ -85,7 +103,62 @@ const MAX_PLAY_RETRIES = 3;
 ws.onConnect = () => {
   document.getElementById('idleScreen').classList.add('hidden');
   document.getElementById('statusBadge').textContent = '已连接';
+  checkLogin();
 };
+
+// ── B站登录(未登录时显示二维码, 扫码成功后保存cookie并自动恢复) ──
+let loginPollTimer = null;
+
+async function checkLogin() {
+  try {
+    const r = await fetch('/api/login/status');
+    const d = await r.json();
+    if (d.logged_in) hideLoginOverlay();
+    else showLoginOverlay();
+  } catch(e) {}
+}
+
+function showLoginOverlay() {
+  document.getElementById('loginOverlay').classList.remove('hidden');
+  refreshLoginQr();
+}
+
+function hideLoginOverlay() {
+  document.getElementById('loginOverlay').classList.add('hidden');
+  stopLoginPoll();
+}
+
+function refreshLoginQr() {
+  stopLoginPoll();
+  document.getElementById('loginQrImg').src = '/api/login/qr?t=' + Date.now();
+  const st = document.getElementById('loginStatus');
+  st.textContent = '等待扫码...';
+  st.className = 'login-status';
+  loginPollTimer = setInterval(pollLogin, 2000);
+}
+
+function stopLoginPoll() {
+  if (loginPollTimer) { clearInterval(loginPollTimer); loginPollTimer = null; }
+}
+
+async function pollLogin() {
+  try {
+    const r = await fetch('/api/login/poll');
+    const d = await r.json();
+    const st = document.getElementById('loginStatus');
+    st.textContent = d.message || d.status;
+    if (d.status === 'expired' || d.status === 'error') {
+      st.className = 'login-status expired';
+    } else if (d.status === 'success') {
+      st.textContent = '登录成功! 即将继续...';
+      st.className = 'login-status';
+      stopLoginPoll();
+      setTimeout(() => location.reload(), 3000);   // 显示3秒后自动刷新, 恢复正常服务
+    }
+  } catch(e) {}
+}
+
+checkLogin();   // 页面加载即检查登录状态
 
 function loadVideo(song) {
   loadGen++;                                  // 新歌 = 新一代, 旧代回调全部失效
