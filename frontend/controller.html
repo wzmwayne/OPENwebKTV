@@ -16,19 +16,17 @@ body{
 .header h1{font-size:18px;color:#7c5cfc}
 .header .badge{margin-left:auto;font-size:10px;padding:3px 8px;border-radius:8px;background:#1a2a1a;color:#8f8}
 .badge.dc{background:#2a1a1a;color:#f88}
-#loginBanner{position:fixed;top:56px;left:0;right:0;max-width:480px;margin:0 auto;z-index:9;
-  background:#2a1a08;color:#ffd;font-size:13px;padding:10px 16px;text-align:center;
-  border-bottom:1px solid #4a3010;display:none}
-#loginBanner button{margin:3px 4px 0;background:#7c5cfc;color:#fff;border:none;
-  border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer}
-#loginBanner button.sec{background:#2a2a3a}
-#loginQrBox{position:fixed;top:96px;left:0;right:0;max-width:480px;margin:0 auto;z-index:9;
-  background:#14141f;border-bottom:1px solid #2a2a3a;padding:14px 16px;text-align:center}
-#loginQrBox img{width:200px;height:200px;background:#fff;border-radius:10px;padding:8px}
-#loginQrBox .qr-status{margin-top:8px;font-size:12px;color:#8f8}
-#loginQrBox .qr-status.qr-error{color:#f88}
-#loginQrBox button{margin-top:10px;background:#2a2a3a;color:#fff;border:none;
-  border-radius:6px;padding:6px 16px;font-size:12px;cursor:pointer}
+#loginLock{position:fixed;top:0;left:0;right:0;bottom:0;z-index:99;
+  background:#0a0a0f;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  color:#fff;text-align:center;padding:24px}
+#loginLock .lock-icon{font-size:44px;margin-bottom:12px}
+#loginLock .lock-title{font-size:20px;color:#7c5cfc;margin-bottom:8px}
+#loginLock .lock-sub{font-size:14px;color:rgba(255,255,255,.45);margin-bottom:20px;line-height:1.7}
+#loginLock .lock-status{margin-bottom:16px;font-size:13px;color:#8f8;min-height:18px}
+#loginLock .lock-status.expired{color:#f88}
+#loginLock button{background:#7c5cfc;color:#fff;border:none;border-radius:10px;
+  padding:12px 34px;font-size:15px;cursor:pointer}
+#loginLock button:hover{background:#6a4aee}
 
 .search-bar{padding:10px 16px}
 .search-bar input{width:100%;padding:10px 14px;border-radius:8px;border:1px solid #2a2a3a;
@@ -117,16 +115,12 @@ body{
   <h1>OwK</h1>
   <span class="badge" id="statusBadge">断开</span>
 </div>
-<div id="loginBanner">⚠ B站未登录 — 请在播放端(电视)屏幕扫码登录
+<div id="loginLock" class="hidden">
+  <div class="lock-icon">🔑</div>
+  <div class="lock-title">B站未登录</div>
+  <div class="lock-sub">请在播放端(电视)屏幕<br>扫码登录后使用</div>
+  <div id="lockStatus" class="lock-status">等待扫码...</div>
   <button onclick="refreshLoginQr()">刷新二维码</button>
-  <button onclick="toggleLoginQr()">显示二维码</button>
-  <button class="sec" onclick="logoutLogin()">退出登录</button>
-  <button class="sec" onclick="dismissLoginBanner()">知道了</button>
-</div>
-<div id="loginQrBox" class="hidden">
-  <img id="loginQrImg" alt="登录二维码">
-  <div id="loginQrStatus" class="qr-status">等待扫码...</div>
-  <button onclick="closeLoginQr()">收起</button>
 </div>
 
 <!-- ════════════ Tab: 下载 ════════════ -->
@@ -219,87 +213,59 @@ ws.onConnect = () => {
   checkLogin();
 };
 
-// ── B站登录: 提示条 + 二维码控制(刷新/显示/退出登录) ──
+// ── B站登录: 未登录全屏锁定, 唯一操作=刷新二维码 ──
 let loginCheckTimer = null;
-let loginQrTimer = null;
-let bannerDismissed = false;
+let loginPollTimer = null;
 
 async function checkLogin() {
   try {
     const r = await fetch('/api/login/status');
     const d = await r.json();
-    const banner = document.getElementById('loginBanner');
-    if (!d.logged_in) {
-      if (!bannerDismissed) banner.style.display = 'block';
-      if (!loginCheckTimer) loginCheckTimer = setInterval(checkLogin, 5000);
-    } else {
-      const wasHidden = banner.style.display === 'none';
-      hideLoginBanner();
-      closeLoginQr();
-      if (loginCheckTimer) { clearInterval(loginCheckTimer); loginCheckTimer = null; }
-      if (!wasHidden) showToast('B站登录成功');
-    }
+    if (!d.logged_in) showLoginLock();
+    else hideLoginLock();
   } catch(e) {}
 }
 
-function hideLoginBanner() {
-  document.getElementById('loginBanner').style.display = 'none';
-}
-function dismissLoginBanner() {
-  bannerDismissed = true;
-  hideLoginBanner();
+function showLoginLock() {
+  const lock = document.getElementById('loginLock');
+  lock.classList.remove('hidden');
+  if (!loginPollTimer) {
+    setLockStatus('等待扫码...', '');
+    loginPollTimer = setInterval(pollLoginLock, 2000);
+  }
+  if (!loginCheckTimer) loginCheckTimer = setInterval(checkLogin, 5000);
 }
 
-// 刷新二维码(服务端强制生成新key并广播, 播放端同步更新)
+function hideLoginLock() {
+  const lock = document.getElementById('loginLock');
+  const wasShown = !lock.classList.contains('hidden');
+  lock.classList.add('hidden');
+  if (loginPollTimer) { clearInterval(loginPollTimer); loginPollTimer = null; }
+  if (loginCheckTimer) { clearInterval(loginCheckTimer); loginCheckTimer = null; }
+  if (wasShown) showToast('B站登录成功');
+}
+
+function setLockStatus(t, cls) {
+  const el = document.getElementById('lockStatus');
+  el.textContent = t;
+  el.className = 'lock-status' + (cls ? ' ' + cls : '');
+}
+
+// 唯一操作: 刷新二维码(服务端重新生成并广播, 播放端同步更新)
 function refreshLoginQr() {
   fetch('/api/login/qr/refresh', {method:'POST'}).then(r => {
-    if (r.ok) { showToast('二维码已刷新'); openLoginQr(); }
-    else showToast('刷新失败');
-  }).catch(() => showToast('刷新失败'));
+    if (r.ok) { setLockStatus('二维码已刷新，请扫码', ''); showToast('二维码已刷新'); }
+    else setLockStatus('刷新失败，请重试', 'expired');
+  }).catch(() => setLockStatus('刷新失败，请重试', 'expired'));
 }
 
-// 显示/收起二维码(供平板等非扫码端查看)
-function openLoginQr() {
-  const box = document.getElementById('loginQrBox');
-  box.classList.remove('hidden');
-  document.getElementById('loginQrImg').src = '/api/login/qr?t=' + Date.now();
-  setLoginQrStatus('等待扫码...', '');
-  if (!loginQrTimer) loginQrTimer = setInterval(pollLoginQr, 2000);
-}
-function closeLoginQr() {
-  document.getElementById('loginQrBox').classList.add('hidden');
-  if (loginQrTimer) { clearInterval(loginQrTimer); loginQrTimer = null; }
-}
-function toggleLoginQr() {
-  const box = document.getElementById('loginQrBox');
-  if (box.classList.contains('hidden')) openLoginQr();
-  else closeLoginQr();
-}
-function setLoginQrStatus(t, cls) {
-  const el = document.getElementById('loginQrStatus');
-  el.textContent = t;
-  el.className = 'qr-status' + (cls ? ' ' + cls : '');
-}
-async function pollLoginQr() {
+async function pollLoginLock() {
   try {
     const d = await (await fetch('/api/login/poll')).json();
-    setLoginQrStatus(d.message || d.status,
-      (d.status === 'expired' || d.status === 'error') ? 'qr-error' : '');
-    if (d.status === 'success') {
-      closeLoginQr();
-      hideLoginBanner();
-      showToast('B站登录成功');
-    }
+    setLockStatus(d.message || d.status,
+      (d.status === 'expired' || d.status === 'error') ? 'expired' : '');
+    if (d.status === 'success') hideLoginLock();
   } catch(e) {}
-}
-
-// 退出登录(删除cookie, 播放端回到扫码状态)
-function logoutLogin() {
-  if (!confirm('确定退出B站登录?')) return;
-  fetch('/api/login/logout', {method:'POST'}).then(r => {
-    if (r.ok) { showToast('已退出登录'); closeLoginQr(); bannerDismissed = false; }
-    else showToast('操作失败');
-  }).catch(() => showToast('操作失败'));
 }
 
 checkLogin();
