@@ -2,15 +2,15 @@
 """
 OwK 播放测试服务器 (端口 8090)
 
-用途: 最小化复现"自动切歌后无声音"问题。
-行为: 网页连接 WS 后立即播放第一首; 第一首播完(客户端上报 ended)后自动切第二首。
-播放逻辑与 frontend/player.html 完全一致(含 muted 启动→100ms 后取消静音技巧)。
+用途: 最小化复现"自动切歌后无声音/不播放"问题。
+行为: 网页连接 WS 后服务器下发 play 1(自动播放被浏览器策略阻止时, 点击按钮即可);
+      第一首播完自动切第二首(可在页面关闭"自动切歌")。
 
-页面显示: 当前歌曲号 / muted / volume / paused / readyState / 播放进度,
-并标注 play() 是否被浏览器拒绝(autoplay 策略)。
-可用 ?mode=direct 关闭静音技巧(直接播放), 与默认模式对比。
+页面提供指令控制(按钮/键盘), 无需依赖自动播放策略:
+  ▶ 播放 / ⏸ 暂停 / ⏮ SONG 1 / ⏭ SONG 2 / 静音切换 / 自动切歌开关 / ↻ 重载
+  快捷键: Space=播放暂停, 1=SONG1, 2=SONG2, M=静音, R=重载
 
-依赖: fastapi + uvicorn (项目已有)
+状态面板实时显示: 当前歌曲 / muted / volume / paused / readyState / 进度 / play()是否被拒。
 """
 
 import json
@@ -37,75 +37,122 @@ PAGE = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>OwK 播放测试</title>
+<title>OwK 播放测试(指令控制)</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-family:sans-serif}
 video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:contain}
-#status{position:fixed;top:12px;left:12px;z-index:9;background:rgba(0,0,0,.7);
+#status{position:fixed;top:12px;left:12px;z-index:9;background:rgba(0,0,0,.75);
   padding:8px 14px;border-radius:8px;font-size:14px;line-height:1.6;white-space:pre}
 #status .ok{color:#8f8}#status .bad{color:#f88}
+#warn{position:fixed;top:64px;left:12px;z-index:9;background:rgba(120,0,0,.85);
+  padding:6px 12px;border-radius:8px;font-size:13px;color:#fcc;display:none}
+#btns{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:9;
+  display:flex;gap:8px;flex-wrap:wrap;justify-content:center;background:rgba(0,0,0,.7);
+  padding:10px 14px;border-radius:12px;max-width:92vw}
+#btns button{background:#2a2a3a;color:#fff;border:none;border-radius:8px;
+  padding:10px 16px;font-size:14px;cursor:pointer}
+#btns button:hover{background:#7c5cfc}
+#btns button.hot{background:#7c5cfc}
 #mode{position:fixed;top:12px;right:12px;z-index:9;background:rgba(0,0,0,.7);
   padding:8px 14px;border-radius:8px;font-size:12px;color:#aaa}
 </style>
 </head>
 <body>
-<video id="v" playsinline></video>
-<div id="mode"></div>
+<video id="v" playsinline controls></video>
+<div id="mode">指令控制版 — 快捷键: Space=播放/暂停 1=SONG1 2=SONG2 M=静音 R=重载</div>
+<div id="warn">⚠ 自动播放被浏览器阻止 — 请点击底部【▶ 播放】</div>
 <div id="status"></div>
+<div id="btns">
+  <button class="hot" onclick="cmdPlay()">▶ 播放</button>
+  <button onclick="cmdPause()">⏸ 暂停</button>
+  <button onclick="loadVideo(1)">⏮ SONG 1</button>
+  <button onclick="loadVideo(2)">⏭ SONG 2</button>
+  <button id="muteBtn" onclick="toggleMute()">🔇 静音</button>
+  <button id="autoBtn" onclick="toggleAuto()">⚡ 自动切歌: 开</button>
+  <button onclick="reloadCur()">↻ 重载</button>
+</div>
 <script>
 const v = document.getElementById('v');
-const mode = new URLSearchParams(location.search).get('mode') || 'muted';
-document.getElementById('mode').textContent =
-  mode === 'direct' ? '模式: direct(无静音技巧)' : '模式: muted(静音启动→100ms 取消)';
-
 const ws = new WebSocket('ws://' + location.host + '/ws');
-let cur = 0, endedFlag = false, playRejected = false, lastUnmute = '-';
+let cur = 0, endedFlag = false, autoSwitch = true, playRejected = false;
 
-// 与真实 player.html 相同的换源逻辑
+function showWarn(on) {
+  document.getElementById('warn').style.display = on ? 'block' : 'none';
+}
+
+// 指令: 加载并播放指定歌曲(按钮点击 = 用户手势, 不受自动播放策略限制)
+let autoMute = false;
 function loadVideo(id) {
   v.pause();
   v.removeAttribute('src');
   v.load();
-  cur = id; endedFlag = false; playRejected = false; lastUnmute = '-';
-  if (mode === 'muted') v.muted = true;
+  cur = id; endedFlag = false; playRejected = false;
+  showWarn(false);
+  autoMute = true;
+  v.muted = true;   // 静音启动, 满足浏览器自动播放策略
   v.src = `/media/${id}`;
   v.load();
   try { v.currentTime = 0; } catch(e) {}
   const p = v.play();
-  if (p && p.catch) {
-    p.then(() => {
-      if (mode === 'muted') {
-        setTimeout(() => { v.muted = false; lastUnmute = '已取消'; }, 100);
-      }
-    }).catch(() => { playRejected = true; });
-  }
+  if (p && p.catch) p.catch(() => { playRejected = true; showWarn(true); });
+  document.title = 'SONG ' + id;
 }
+// 真正开始播放时取消静音(比固定100ms定时器更可靠)
+v.onplaying = () => { if (autoMute) { autoMute = false; v.muted = false; } };
+function cmdPlay() {
+  if (cur === 0) { loadVideo(1); return; }
+  showWarn(false);
+  v.play().catch(() => {});
+}
+function cmdPause() { v.pause(); }
+function toggleMute() {
+  v.muted = !v.muted;
+  document.getElementById('muteBtn').textContent = v.muted ? '🔇 静音' : '🔊 已开声';
+}
+function toggleAuto() {
+  autoSwitch = !autoSwitch;
+  document.getElementById('autoBtn').textContent = '⚡ 自动切歌: ' + (autoSwitch ? '开' : '关');
+}
+function reloadCur() { if (cur > 0) loadVideo(cur); }
 
-v.ontimeupdate = () => {
-  const d = v.duration || 1;
-  if (d - v.currentTime < 0.5 && d > 0 && !endedFlag) {
-    endedFlag = true;
-    ws.send(JSON.stringify({type:'ended', id:cur}));
-  }
-};
-v.onerror = () => { document.getElementById('status').textContent += '\\n[视频错误]'; };
-v.onvolumechange = () => { lastUnmute = v.muted ? 'muted=true' : 'muted=false'; };
+// 键盘指令
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') { e.preventDefault(); (v.paused ? cmdPlay() : cmdPause()); }
+  else if (e.key === '1') loadVideo(1);
+  else if (e.key === '2') loadVideo(2);
+  else if (e.key.toLowerCase() === 'm') toggleMute();
+  else if (e.key.toLowerCase() === 'r') reloadCur();
+});
 
+// WS: 服务器指令(连接即 play 1; ended(id=1) 后 play 2)
 ws.onmessage = (e) => {
   const m = JSON.parse(e.data);
   if (m.type === 'play') loadVideo(m.id);
 };
 ws.onclose = () => { document.getElementById('status').textContent += '\\n[WS断开]'; };
 
+// 播完上报(自动切歌开启时)
+v.ontimeupdate = () => {
+  const d = v.duration || 1;
+  if (d - v.currentTime < 0.5 && d > 0 && !endedFlag) {
+    endedFlag = true;
+    if (autoSwitch && ws.readyState === 1) {
+      ws.send(JSON.stringify({type:'ended', id:cur}));
+    }
+  }
+};
+v.onerror = () => { document.getElementById('status').textContent += '\\n[视频错误]'; };
+
+// 状态面板
 setInterval(() => {
   const el = document.getElementById('status');
-  const cls = (v.muted || playRejected) ? 'bad' : 'ok';
+  const bad = v.muted || playRejected;
   el.innerHTML =
-    `<span class="${cls}">当前歌曲: SONG ${cur}  (${mode})</span>
+    `<span class="${bad ? 'bad' : 'ok'}">当前: SONG ${cur || '-'} ${playRejected ? '(play被拒!)' : ''}</span>
 muted: ${v.muted} | volume: ${v.volume.toFixed(2)} | paused: ${v.paused}
 readyState: ${v.readyState} | 进度: ${v.currentTime.toFixed(1)}s / ${(v.duration||0).toFixed(1)}s
-play() 被拒: ${playRejected} | 取消静音: ${lastUnmute} | ended 已报: ${endedFlag}`;
+自动切歌: ${autoSwitch ? '开' : '关'} | WS: ${ws.readyState === 1 ? '已连' : '断开'}`;
 }, 200);
 </script>
 </body>
@@ -129,7 +176,7 @@ async def media(idx: int):
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     log.info("播放器连接")
-    await ws.send_json({"type": "play", "id": 1})  # 连接即播第一首
+    await ws.send_json({"type": "play", "id": 1})  # 连接即下发第一首(是否播取决于浏览器策略, 可点按钮)
     try:
         while True:
             data = json.loads(await ws.receive_text())
@@ -144,8 +191,8 @@ async def ws_endpoint(ws: WebSocket):
 
 if __name__ == "__main__":
     print("=" * 50)
-    print("  OwK 播放测试服务器")
+    print("  OwK 播放测试服务器 (指令控制版)")
     print(f"  地址: http://127.0.0.1:{PORT}")
-    print("  模式: muted(默认, 复现真实播放器) / ?mode=direct")
+    print("  按钮: 播放/暂停/SONG1/SONG2/静音/自动切歌/重载")
     print("=" * 50)
     uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="info")
