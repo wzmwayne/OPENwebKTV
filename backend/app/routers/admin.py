@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from .. import admin_auth
 from ..database import SessionLocal
 from ..models import Song, QueueItem, PlaylistSong
+from .api import clear_lyrics_cache
 from ..player_engine import player_engine
 from ..ws_manager import ws_manager
 
@@ -105,11 +106,13 @@ async def admin_delete_song(song_id: int):
             raise HTTPException(404, "歌曲不存在")
         title = song.title
         file_path = song.file_path or ""
+        bvid = song.bvid
         db.query(QueueItem).filter(QueueItem.song_id == song_id).delete()
         db.query(PlaylistSong).filter(PlaylistSong.song_id == song_id).delete()
         if player_engine.current_song and player_engine.current_song.id == song_id:
             await player_engine.stop_current()   # 正在播放则停播并切下一首/空闲
         db.delete(song)
+        clear_lyrics_cache(bvid)   # 内存歌词缓存同步清理(避免重下后命中旧歌词)
         db.commit()
     finally:
         db.close()

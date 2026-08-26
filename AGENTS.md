@@ -132,7 +132,8 @@ OPENwebKTV/
 - `GET /api/admin/status` — 全局状态 {phase: none|code|active, allowed, code_ttl, admin_remaining}(无动态码)
 - `POST /api/admin/cancel` — 取消验证/授权, 播放端解除阻塞回空闲
 - `POST /api/admin/queue/clear` — 清空播放列表(高级操作)
-- `DELETE /api/admin/songs/{song_id}` — 删除本地歌曲: 数据库行+媒体文件+队列/歌单引用清理; 正在播放则停播
+- `DELETE /api/admin/songs/{song_id}` — 删除本地歌曲: 数据库行+媒体文件+队列/歌单引用清理; 正在播放则停播;
+  并清理该 bvid 的歌词内存缓存(LYRICS_CACHE 全部4类键, api.clear_lyrics_cache)
 - **高级操作不做接口级鉴权**(用户指定, LAN 信任模型): 以 admin_auth 全局状态为准, 前端按状态门控
 - `GET /api/login/status` — B站是否已登录 {logged_in, user_id}
 - `GET /api/login/qr` — 生成B站登录二维码 PNG(播放端显示)
@@ -367,3 +368,12 @@ cd backend && python3 login_server.py
   「尚未登录」已过期——bilibili_cookie.json 已存在且有效(SESSDATA 齐, user_id 3546822289131703);
   ②backend/data/ 已建库, media/ 已有 9 首已下载视频(原神系列/玻璃/晚安 等)。已同步更新
   §0.4/§2/§6.1 相关表述。另: 工作区 start.py 仅文件权限变更 644→755(内容未动), 未提交。
+
+- **2026-08-27 删歌补漏(歌词缓存清理)**: 删除歌曲时 `db.delete(song)` 只删库行(歌词随行删),
+  但 **LYRICS_CACHE 内存缓存不清理** → 同 bvid 重下后会命中旧歌词(字幕更新不生效)。
+  修复=api.py 新增 `clear_lyrics_cache(bvid)`(清理 B站轨 `{bvid}:*` / LRCLIB搜索词
+  `lrc-k:{bvid}:*` / LRCLIB标题 `lrc-t:{bvid}` 四类键, 前缀匹配不误删其他歌曲), admin.py
+  删除歌曲时调用(已验证: 只清目标 bvid, 冒烟通过)。
+  另评估「歌词改文件存储」代价: 现有数据仅 5 首有歌词共 22.4KB(单首最大 7.6KB, db 总 60KB),
+  SQLite TEXT 列完全无压力; 文件存储收益低(本项目歌词全自动生成, 无需人工编辑)而风险中
+  (文件↔DB行一致性/孤儿文件/原子写/启动迁移), **结论: 维持列存储, 不迁移**。

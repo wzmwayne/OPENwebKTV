@@ -67,6 +67,20 @@ async def proxy_cover(url: str):
 LYRICS_CACHE: dict[str, list] = {}
 
 
+def clear_lyrics_cache(bvid: str):
+    """删除歌曲时清理该 bvid 相关的所有歌词缓存键(与存储/内存两层同步删除)"""
+    keys = [
+        k for k in LYRICS_CACHE
+        if k.startswith(f"{bvid}:")          # B站字幕轨(含默认-1键)
+        or k.startswith(f"lrc-k:{bvid}:")    # LRCLIB 搜索词(键含关键词哈希)
+        or k == f"lrc-t:{bvid}"              # LRCLIB 标题
+    ]
+    for k in keys:
+        LYRICS_CACHE.pop(k, None)
+    if keys:
+        log.info(f"已清理歌词缓存: {bvid} ({len(keys)} 个键)")
+
+
 def _lines_to_json(lines) -> str:
     return json.dumps(
         [{"start": l.start, "end": l.end, "text": l.text} for l in lines],
