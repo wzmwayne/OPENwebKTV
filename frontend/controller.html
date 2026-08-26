@@ -484,11 +484,12 @@ async function loadDetailTracks(bvid) {
     detailTracks = d.tracks || [];
   } catch(e) {}
   const box = document.getElementById('dvTracks');
-  if (detailTracks.length > 1) {
+  if (detailTracks.length >= 1) {
     box.classList.remove('hidden');
     box.innerHTML = '<span class="t-label">字幕轨:</span>' + detailTracks.map((t, idx) =>
-      `<button class="${idx === 0 ? 'on' : ''}" onclick="selectTrack(${idx})">${esc(t.lan_doc || t.lan || ('轨' + idx))}</button>`
-    ).join('');
+      `<button data-track="${idx}" class="${idx === 0 ? 'on' : ''}" onclick="selectTrack(${idx})">${esc(t.lan_doc || t.lan || ('轨' + idx))}${t.ai ? '(AI)' : ''}</button>`
+    ).join('') +
+      `<button data-track="-1" class="${detailTrackIdx === -1 ? 'on' : ''}" onclick="selectTrack(-1)">无歌词</button>`;
   } else {
     box.classList.add('hidden');
     box.innerHTML = '';
@@ -498,13 +499,14 @@ async function loadDetailTracks(bvid) {
 
 function selectTrack(idx) {
   detailTrackIdx = idx;
-  const box = document.getElementById('dvTracks');
-  box.querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', i === idx));
+  document.getElementById('dvTracks').querySelectorAll('button')
+    .forEach(b => b.classList.toggle('on', parseInt(b.dataset.track, 10) === idx));
   loadDetailLyrics(detailBvid, idx);
 }
 
 async function loadDetailLyrics(bvid, track) {
   const el = document.getElementById('dvLyrics');
+  if (track < 0) { el.textContent = '无歌词'; return; }
   el.textContent = '加载中...';
   try {
     const q = track >= 0 ? ('?track=' + track) : '';

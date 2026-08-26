@@ -68,6 +68,7 @@ class SubtitleTrack:
     lan: str
     lan_doc: str
     url: str
+    ai: bool = False   # True = B站AI字幕(对歌声的语音转写常错乱, 优先避开)
 
 
 @dataclass
@@ -257,12 +258,15 @@ class BilibiliClient:
             url = s.get("subtitle_url", "")
             if url and not url.startswith("http"):
                 url = "https:" + url
+            lan = str(s.get("lan", ""))
             tracks.append(SubtitleTrack(
-                lan=s.get("lan", ""),
-                lan_doc=s.get("lan_doc", ""),
+                lan=lan,
+                lan_doc=str(s.get("lan_doc", "") or ""),
                 url=url,
+                ai=lan.startswith("ai-") or s.get("ai_type") in (1, "1"),
             ))
-        log.info(f"字幕: 找到 {len(tracks)} 条字幕轨")
+        log.info(f"字幕: 找到 {len(tracks)} 条字幕轨"
+                 f"({'AI:' + ','.join(t.lan for t in tracks if t.ai) if any(t.ai for t in tracks) else ' 无AI'})")
         return tracks
 
     async def subtitle_content(self, subtitle_url: str) -> list[SubtitleLine]:
@@ -329,14 +333,22 @@ class BilibiliClient:
         return pi
 
     async def get_lyrics(self, bvid: str) -> list[SubtitleLine]:
-        """一键获取歌词: 找字幕→下载→返回时间轴"""
+        """一键获取歌词: 找字幕→下载→返回时间轴。
+
+        优先取非AI字幕轨(B站AI字幕对歌声的转写经常错乱/张冠李戴),
+        仅当全部为AI轨时退回第一条。
+        """
         tracks = await self.subtitles(bvid)
-        for track in tracks:
-            if track.url:
-                lines = await self.subtitle_content(track.url)
-                if lines:
-                    log.info(f"歌词: 使用字幕 '{track.lan_doc}' ({len(lines)} 行)")
-                    return lines
+        usable = [t for t in tracks if t.url]
+        pick = next((t for t in usable if not t.ai), None)
+        if pick is None and usable:
+            pick = usable[0]
+        if pick:
+            lines = await self.subtitle_content(pick.url)
+            if lines:
+                log.info(f"歌词: 使用字幕 '{pick.lan_doc or pick.lan}'"
+                         f"{' (AI字幕)' if pick.ai else ''} ({len(lines)} 行)")
+                return lines
         log.info("歌词: 无可用字幕")
         return []
 

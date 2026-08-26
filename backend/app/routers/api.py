@@ -43,7 +43,7 @@ async def lyric_tracks(bvid: str):
         log.warning(f"获取字幕轨失败 {bvid}: {e}")
         tracks = []
     return {"tracks": [
-        {"index": i, "lan": t.lan, "lan_doc": t.lan_doc}
+        {"index": i, "lan": t.lan, "lan_doc": t.lan_doc, "ai": t.ai}
         for i, t in enumerate(tracks) if t.url
     ]}
 
@@ -69,9 +69,15 @@ async def get_song_lyrics(bvid: str, track: int = -1, db: Session = Depends(get_
     try:
         async with BilibiliClient(cookie_path=settings.BILIBILI_COOKIE) as client:
             tracks = await client.subtitles(bvid)
-            if tracks:
-                idx = track if 0 <= track < len(tracks) else 0
-                lines = await client.subtitle_content(tracks[idx].url)
+            usable = [t for t in tracks if t.url]
+            if usable:
+                if track >= 0:
+                    idx = track if 0 <= track < len(usable) else 0
+                    pick = usable[idx]
+                else:
+                    # 默认优先非AI字幕(避免B站AI字幕内容错乱)
+                    pick = next((t for t in usable if not t.ai), usable[0])
+                lines = await client.subtitle_content(pick.url)
     except Exception as e:
         log.warning(f"获取歌词失败 {bvid}: {e}")
     data = [{"start": l.start, "end": l.end, "text": l.text} for l in lines]
