@@ -40,6 +40,7 @@ body{
 .dv-tracks .t-label{font-size:12px;color:rgba(255,255,255,.4);margin-right:4px}
 .dv-tracks button{background:#2a2a3a;color:#ccc;border:none;border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer}
 .dv-tracks button.on{background:#7c5cfc;color:#fff}
+.dv-tracks button.err{background:#5a1f1f;color:#d99;cursor:not-allowed}
 .dv-section{padding:12px 16px 6px;font-size:13px;color:#7c5cfc;font-weight:bold}
 .dv-lyrics{padding:0 16px 20px;font-size:13px;color:rgba(255,255,255,.75);line-height:1.9}
 .dv-lyrics .dv-line .t{color:rgba(255,255,255,.35);margin-right:8px;font-size:11px}
@@ -462,7 +463,7 @@ function openDetail(i) {
   document.getElementById('dvDownloadBtn').textContent = '⬇ 下载';
   resetDetailProgress();
   document.getElementById('detailView').classList.remove('hidden');
-  loadDetailTracks(it.bvid);
+  loadDetailTracks(it.bvid, it.title, it.duration);
 }
 
 function closeDetail() {
@@ -478,21 +479,28 @@ function resetDetailProgress() {
   document.getElementById('dvPct').textContent = '0%';
 }
 
-// 多字幕轨选择(仅 >1 轨时显示)
-async function loadDetailTracks(bvid) {
+// 歌词来源选择(全部始终显示; 不可用来源暗红置灰禁止点击)
+async function loadDetailTracks(bvid, title, duration) {
   detailTracks = [];
   try {
-    const d = await (await fetch('/api/lyrics/tracks/' + bvid + '?keyword=' + encodeURIComponent(dlKeyword))).json();
+    const q = '?keyword=' + encodeURIComponent(dlKeyword || '')
+      + '&title=' + encodeURIComponent(title || '')
+      + '&duration=' + (duration || 0);
+    const d = await (await fetch('/api/lyrics/tracks/' + bvid + q)).json();
     detailTracks = d.tracks || [];
   } catch(e) {}
-  // 默认选中第一项(B站轨或第三方)
-  detailTrackIdx = detailTracks.length ? detailTracks[0].index : -1;
+  // 默认选中第一个可用来源(无 error); 全部不可用则 -1(无歌词)
+  const ok = detailTracks.filter(t => !t.error);
+  detailTrackIdx = ok.length ? ok[0].index : -1;
   const box = document.getElementById('dvTracks');
   if (detailTracks.length >= 1) {
     box.classList.remove('hidden');
     box.innerHTML = '<span class="t-label">歌词:</span>' + detailTracks.map((t) => {
       const label = (t.kind === 'lrclib') ? t.lan_doc : (t.lan_doc || t.lan || '歌词');
-      return `<button data-track="${t.index}" class="${t.index === detailTrackIdx ? 'on' : ''}" onclick="selectTrack(${t.index})">${esc(label)}${t.ai ? '(AI)' : ''}</button>`;
+      const err = t.error ? ('·' + esc(t.error)) : '';
+      const cls = (t.index === detailTrackIdx ? 'on' : '') + (t.error ? ' err' : '');
+      const dis = t.error ? ' disabled' : '';
+      return `<button data-track="${t.index}" class="${cls}"${dis} onclick="selectTrack(${t.index})">${esc(label)}${t.ai ? '(AI)' : ''}${err}</button>`;
     }).join('') +
       `<button data-track="-1" class="${detailTrackIdx === -1 ? 'on' : ''}" onclick="selectTrack(-1)">无歌词</button>`;
   } else {
@@ -503,6 +511,8 @@ async function loadDetailTracks(bvid) {
 }
 
 function selectTrack(idx) {
+  const btn = document.getElementById('dvTracks').querySelector(`button[data-track="${idx}"]`);
+  if (btn && btn.disabled) return;   // 不可用来源禁止点击
   detailTrackIdx = idx;
   document.getElementById('dvTracks').querySelectorAll('button')
     .forEach(b => b.classList.toggle('on', parseInt(b.dataset.track, 10) === idx));
@@ -514,7 +524,7 @@ async function loadDetailLyrics(bvid, track) {
   if (track === -1) { el.textContent = '无歌词'; return; }
   el.textContent = '加载中...';
   try {
-    const d = await (await fetch('/api/lyrics/' + bvid + '?track=' + track)).json();
+    const d = await (await fetch('/api/lyrics/' + bvid + '?track=' + track + '&keyword=' + encodeURIComponent(dlKeyword || ''))).json();
     const ls = d.lyrics || [];
     if (!ls.length) { el.textContent = '无歌词'; return; }
     el.innerHTML = ls.map(l =>

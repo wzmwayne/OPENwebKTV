@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import io
 import json
 import os
@@ -73,12 +74,23 @@ def _lines_to_json(lines) -> str:
     )
 
 
+def _lrc_kw_key(bvid: str, kw: str) -> str:
+    """LRCLIB 搜索词歌词缓存键: 关键词参与哈希, 避免不同搜索词互相污染"""
+    kw = (kw or "").strip()
+    if not kw:
+        return f"lrc-k:{bvid}:"
+    return f"lrc-k:{bvid}:" + hashlib.md5(kw.encode("utf-8")).hexdigest()[:8]
+
+
 @router.get("/lyrics/tracks/{bvid}")
-async def lyric_tracks(bvid: str, keyword: str = "", db: Session = Depends(get_db)):
-    """列出歌词来源选项(供控制端同级选择):
+async def lyric_tracks(bvid: str, keyword: str = "", title: str = "", duration: int = 0,
+                       db: Session = Depends(get_db)):
+    """列出歌词来源选项(供控制端同级选择, 全部始终显示):
     - B站字幕轨(index >= 0, 带 ai 标记)
-    - 第三方LRCLIB(用户搜索词, index=-2; 有关键词时列出)
-    - 第三方LRCLIB(标题提取, index=-3; 提取失败或LRCLIB无结果则隐藏)
+    - 第三方LRCLIB(用户搜索词, index=-2; 无搜索词或LRCLIB无结果时 error)
+    - 第三方LRCLIB(标题提取, index=-3; 无标题或LRCLIB无结果时 error)
+    error 非空 = 该来源不可用(控制端暗红置灰禁止点击)。
+    title/duration 由控制端传搜索结果(未下载时 Song 行不存在), 否则回退 Song 行。
     """
     try:
         async with BilibiliClient(cookie_path=settings.BILIBILI_COOKIE) as client:
@@ -87,43 +99,63 @@ async def lyric_tracks(bvid: str, keyword: str = "", db: Session = Depends(get_d
         log.warning(f"获取字幕轨失败 {bvid}: {e}")
         tracks = []
     result = [
-        {"index": i, "lan": t.lan, "lan_doc": t.lan_doc, "ai": t.ai, "kind": "bili"}
+        {"index": i, "lan": t.lan, "lan_doc": t.lan_doc, "ai": t.ai, "kind": "bili", "error": ""}
         for i, t in enumerate(tracks) if t.url
     ]
-    if (keyword or "").strip():
-        result.append({"index": -2, "lan": "lrclib", "lan_doc": "第三方歌词(搜索词)",
-                       "ai": False, "kind": "lrclib"})
     song = db.query(Song).filter(Song.bvid == bvid).first()
-    if song and song.title:
-        # 标题提取的第三方歌词: 失败(解析不出/LRCLIB无结果)则隐藏; 结果缓存复用
-        key = f"lrc-t:{bvid}"
+    stitle = (title or "").strip() or (song.title if song else "")
+    sdur = duration or (song.duration if song else 0)
+    kw = (keyword or "").strip() or (song.search_keyword if song else "").strip()
+
+    # 第三方(搜索词) -2: 始终显示; 无搜索词或LRCLIB无结果 → error
+    if not kw:
+        result.append({"index": -2, "lan": "lrclib", "lan_doc": "第三方歌词(搜索词)",
+                       "ai": False, "kind": "lrclib", "error": "缺少搜索词"})
+    else:
+        key = _lrc_kw_key(bvid, kw)
         if key not in LYRICS_CACHE:
-            lrclines = await fetch_lrclib_lyrics(song.title, song.duration, "", mode="title")
+            lrclines = await fetch_lrclib_lyrics(stitle, sdur, kw, mode="keyword")
             LYRICS_CACHE[key] = [
                 {"start": l.start, "end": l.end, "text": l.text} for l in lrclines
             ]
-        if LYRICS_CACHE[key]:
-            result.append({"index": -3, "lan": "lrclib", "lan_doc": "第三方歌词(标题)",
-                           "ai": False, "kind": "lrclib"})
+        result.append({"index": -2, "lan": "lrclib", "lan_doc": "第三方歌词(搜索词)",
+                       "ai": False, "kind": "lrclib",
+                       "error": "" if LYRICS_CACHE[key] else "未找到歌词"})
+
+    # 第三方(标题) -3: 始终显示; 无标题或LRCLIB无结果 → error
+    if not stitle:
+        result.append({"index": -3, "lan": "lrclib", "lan_doc": "第三方歌词(标题)",
+                       "ai": False, "kind": "lrclib", "error": "缺少歌曲标题"})
+    else:
+        key = f"lrc-t:{bvid}"
+        if key not in LYRICS_CACHE:
+            lrclines = await fetch_lrclib_lyrics(stitle, sdur, "", mode="title")
+            LYRICS_CACHE[key] = [
+                {"start": l.start, "end": l.end, "text": l.text} for l in lrclines
+            ]
+        result.append({"index": -3, "lan": "lrclib", "lan_doc": "第三方歌词(标题)",
+                       "ai": False, "kind": "lrclib",
+                       "error": "" if LYRICS_CACHE[key] else "未找到歌词"})
     return {"tracks": result}
 
 
 @router.get("/lyrics/{bvid}")
-async def get_song_lyrics(bvid: str, track: int = -1, db: Session = Depends(get_db)):
+async def get_song_lyrics(bvid: str, track: int = -1, keyword: str = "",
+                          db: Session = Depends(get_db)):
     """获取歌词(带时间轴)。
 
-    - track = -2: 第三方LRCLIB, 用户搜索词优先
+    - track = -2: 第三方LRCLIB, 用户搜索词优先(keyword 参数或 Song.search_keyword)
     - track = -3: 第三方LRCLIB, 标题提取
     - track < 0(默认-1): 优先返回下载时存储的歌词(Song.lyrics), 否则B站字幕(非AI优先), 再LRCLIB兜底
     - track >= 0: 取指定B站字幕轨内容(控制端预览切换用)
     """
     if track == -2:
-        key = f"lrc-k:{bvid}"
+        song = db.query(Song).filter(Song.bvid == bvid).first()
+        kw = (keyword or "").strip() or (song.search_keyword if song else "").strip()
+        key = _lrc_kw_key(bvid, kw)
         if key not in LYRICS_CACHE:
-            song = db.query(Song).filter(Song.bvid == bvid).first()
             lrclines = await fetch_lrclib_lyrics(
-                song.title if song else "", song.duration if song else 0,
-                (song.search_keyword if song else "") or "", mode="keyword")
+                song.title if song else "", song.duration if song else 0, kw, mode="keyword")
             LYRICS_CACHE[key] = [
                 {"start": l.start, "end": l.end, "text": l.text} for l in lrclines
             ]
