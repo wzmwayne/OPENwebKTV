@@ -20,6 +20,27 @@ router = APIRouter(prefix="/api")
 log = logging.getLogger("owk.api")
 
 
+# ── 歌词 ────────────────────────────────────────────
+
+LYRICS_CACHE: dict[str, list] = {}
+
+
+@router.get("/lyrics/{bvid}")
+async def get_song_lyrics(bvid: str):
+    """获取B站字幕歌词(带时间轴), 内存缓存"""
+    if bvid in LYRICS_CACHE:
+        return {"lyrics": LYRICS_CACHE[bvid]}
+    lines = []
+    try:
+        async with BilibiliClient(cookie_path=settings.BILIBILI_COOKIE) as client:
+            lines = await client.get_lyrics(bvid)
+    except Exception as e:
+        log.warning(f"获取歌词失败 {bvid}: {e}")
+    data = [{"start": l.start, "end": l.end, "text": l.text} for l in lines]
+    LYRICS_CACHE[bvid] = data
+    return {"lyrics": data}
+
+
 # ── 公共函数 ─────────────────────────────────────────
 
 
