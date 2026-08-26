@@ -160,8 +160,9 @@ async def get_song_lyrics(bvid: str, track: int = -1, keyword: str = "",
 
     - track = -2: 第三方LRCLIB, 用户搜索词优先(keyword 参数或 Song.search_keyword)
     - track = -3: 第三方LRCLIB, 标题提取
-    - track < 0(默认-1): 优先返回下载时存储的歌词(Song.lyrics), 否则B站字幕(非AI优先), 再LRCLIB兜底
-    - track >= 0: 取指定B站字幕轨内容(控制端预览切换用)
+    - track < 0(默认-1): 仅返回下载时存储的歌词(Song.lyrics);
+      无存储(''/NULL)或显式无歌词('[]')一律返回空, **不回落** B站/LRCLIB(存储即所得, 2026-08 修改)
+    - track >= 0: 取指定B站字幕轨内容(控制端预览切换用, 轨为空时 LRCLIB 兜底)
     """
     if track == -2:
         song = db.query(Song).filter(Song.bvid == bvid).first()
@@ -190,7 +191,8 @@ async def get_song_lyrics(bvid: str, track: int = -1, keyword: str = "",
             try:
                 return {"lyrics": json.loads(song.lyrics)}
             except Exception:
-                pass
+                return {"lyrics": []}   # 存储歌词损坏 → 视为无歌词, 不回落
+        return {"lyrics": []}           # 未存储(''/NULL)或显式无歌词('[]') → 一律不回落
     key = f"{bvid}:{track}"
     if key in LYRICS_CACHE:
         return {"lyrics": LYRICS_CACHE[key]}
@@ -211,7 +213,7 @@ async def get_song_lyrics(bvid: str, track: int = -1, keyword: str = "",
         log.warning(f"获取歌词失败 {bvid}: {e}")
     data = [{"start": l.start, "end": l.end, "text": l.text} for l in lines]
     if not data:
-        # LRCLIB 免费歌词兜底(B站无字幕/为空时)
+        # LRCLIB 兜底: 仅 track>=0(显式预览B站轨)场景, 所选轨为空时兜底(2026-08 起 track<0 已不回落)
         song = db.query(Song).filter(Song.bvid == bvid).first()
         if song and song.title:
             try:

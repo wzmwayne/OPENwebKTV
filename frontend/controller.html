@@ -682,6 +682,7 @@ function sortPinned(items) {
 let detailBvid = null;
 let detailTracks = [];
 let detailTrackIdx = 0;
+let detailLyricsGen = 0;   // 歌词预览代际: 防旧请求返回覆盖新选择(显示"上一轮歌词")
 
 function openDetail(i) {
   const it = dlItems[i];
@@ -754,16 +755,21 @@ function selectTrack(idx) {
 }
 
 async function loadDetailLyrics(bvid, track) {
+  const gen = ++detailLyricsGen;   // 每次加载/切换换代, 旧请求返回时丢弃(防覆盖新选择)
   const el = document.getElementById('dvLyrics');
   if (track === -1) { el.textContent = '无歌词'; return; }
-  el.textContent = '加载中...';
+  el.textContent = '歌词加载中';
   try {
     const d = await (await fetch('/api/lyrics/' + bvid + '?track=' + track + '&keyword=' + encodeURIComponent(dlKeyword || ''))).json();
+    if (gen !== detailLyricsGen) return;   // 已被更新的请求取代
     const ls = d.lyrics || [];
     if (!ls.length) { el.textContent = '无歌词'; return; }
     el.innerHTML = ls.map(l =>
       `<div class="dv-line"><span class="t">${formatTime(l.start)}</span>${esc(l.text)}</div>`).join('');
-  } catch(e) { el.textContent = '歌词加载失败'; }
+  } catch(e) {
+    if (gen !== detailLyricsGen) return;
+    el.textContent = '歌词加载失败';
+  }
 }
 
 // 下载(同时保存所选字幕轨歌词); 进度由 WS download_progress 驱动

@@ -115,10 +115,10 @@ OPENwebKTV/
 - `GET|POST /playlists`、`DELETE /playlists/{id}`、歌单内歌曲增删、`POST /playlists/{id}/play`
 - `GET /media/{song_id}` — 本地 MP4 流式播放；仅 `ready`/`audio_only` 状态可流(其余 404)，
   media_type 按扩展名(mp4/m4a/aac)区分
-- `GET /api/lyrics/{bvid}?track=N&keyword=` — 歌词: track<0 时优先返回下载时存储的歌词
-  (Song.lyrics 列), 否则取指定字幕轨(默认第一条); track -2=LRCLIB搜索词(keyword 参数或
-  Song.search_keyword, 缓存键含关键词哈希) / -3=LRCLIB标题 / -1=无歌词/默认 / >=0=B站轨;
-  内存缓存 LYRICS_CACHE
+- `GET /api/lyrics/{bvid}?track=N&keyword=` — 歌词: **track<0 存储即所得**(2026-08 修改):
+  仅返回 Song.lyrics, 无存储(''/NULL)/显式无歌词('[]')/损坏 一律返回空, **不回落**B站/第三方;
+  track -2=LRCLIB搜索词(keyword 参数或 Song.search_keyword, 缓存键含关键词哈希) /
+  -3=LRCLIB标题 / >=0=B站轨(轨空时 LRCLIB 兜底); 内存缓存 LYRICS_CACHE
 - `GET /api/cover?url=` — B站封面代理(带UA+Referer绕热链保护, 内存缓存, 仅允许hdslb/bilibili域名防SSRF)
 - `GET /api/lyrics/tracks/{bvid}?keyword=&title=&duration=` — 歌词来源选项(同级, **全部始终显示**):
   B站轨(ai标记) + 第三方LRCLIB搜索词(-2) + 第三方LRCLIB标题(-3); 不可用来源带 `error` 字段
@@ -400,3 +400,11 @@ cd backend && python3 login_server.py
   track=-1 写入逻辑代码审查+py_compile。**注意(测试教训)**: 验证删歌词端点时真实删掉了库中 id=1
   的歌词, 已用 B站字幕轨(非AI优先, 与下载逻辑一致, 74行)重新拉取写回恢复, id=10 恢复 ''
   (回落显示57行)。后续验证破坏性操作前先备份受影响行。
+
+- **2026-08-27 回落逻辑收口(存储即所得)+预览歌词加载UI**: ①`/api/lyrics` track<0 默认路径不再回落:
+  原来 ''/NULL 会回落 B站字幕→LRCLIB 显示歌词, 现改为**仅返回存储歌词**, ''/NULL/'[]'/损坏JSON 一律
+  返回空(播放端行为=下载时选择的歌词, 无存储即无歌词); 显式预览路径保留回落(track>=0 B站轨轨空
+  LRCLIB兜底, -2/-3 LRCLIB 不受影响)。已验证: ''歌返回空(原回落57行)/存储歌74行/显式B站轨74行/
+  LRCLIB搜索词52行/未下载bvid空。②预览详情页歌词加载UI: `loadDetailLyrics` 文案'加载中...'→
+  **'歌词加载中'** + 新增 **detailLyricsGen 代际守卫**(每次加载/切换换代, 旧请求返回时丢弃,
+  修复快速切轨时"上一轮歌词"覆盖新选择的问题; 与 player.html loadGen 同思路)。
