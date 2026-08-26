@@ -47,6 +47,10 @@ video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:contain}
 #status .ok{color:#8f8}#status .bad{color:#f88}
 #warn{position:fixed;top:64px;left:12px;z-index:9;background:rgba(120,0,0,.85);
   padding:6px 12px;border-radius:8px;font-size:13px;color:#fcc;display:none}
+#hint{position:fixed;bottom:88px;left:50%;transform:translateX(-50%);z-index:9;
+  background:rgba(124,92,252,.92);color:#fff;padding:10px 22px;border-radius:10px;
+  font-size:15px;display:none;white-space:nowrap;animation:hintblink 1.2s infinite}
+@keyframes hintblink{0%,100%{opacity:1}50%{opacity:.55}}
 #btns{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:9;
   display:flex;gap:8px;flex-wrap:wrap;justify-content:center;background:rgba(0,0,0,.7);
   padding:10px 14px;border-radius:12px;max-width:92vw}
@@ -62,6 +66,7 @@ video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:contain}
 <video id="v" playsinline controls></video>
 <div id="mode">指令控制版 — 快捷键: Space=播放/暂停 1=SONG1 2=SONG2 M=静音 R=重载</div>
 <div id="warn">⚠ 自动播放被浏览器阻止 — 请点击底部【▶ 播放】</div>
+<div id="hint">⬆ 按上方向键解除静音</div>
 <div id="status"></div>
 <div id="btns">
   <button class="hot" onclick="cmdPlay()">▶ 播放</button>
@@ -81,33 +86,75 @@ function showWarn(on) {
   document.getElementById('warn').style.display = on ? 'block' : 'none';
 }
 
-// 指令: 加载并播放指定歌曲(按钮点击 = 用户手势, 不受自动播放策略限制)
-let autoMute = false;
+let muteFallback = false, playRetries = 0;
+const MAX_PLAY_RETRIES = 3;
+
+function showWarn(on) {
+  document.getElementById('warn').style.display = on ? 'block' : 'none';
+}
+function showHint(on) {
+  document.getElementById('hint').style.display = on ? 'block' : 'none';
+}
+
+// 静音方案: 先多次尝试直接有声播放; 全部失败则静音开播并提示"按上方向键解除"
 function loadVideo(id) {
   v.pause();
   v.removeAttribute('src');
   v.load();
   cur = id; endedFlag = false; playRejected = false;
+  muteFallback = false; playRetries = 0;
   showWarn(false);
-  autoMute = true;
-  v.muted = true;   // 静音启动, 满足浏览器自动播放策略
+  showHint(false);
+  v.muted = false;          // 第一步: 先尝试非静音直接播放
   v.src = `/media/${id}`;
   v.load();
   try { v.currentTime = 0; } catch(e) {}
-  const p = v.play();
-  if (p && p.catch) p.catch(() => { playRejected = true; showWarn(true); });
+  attemptPlay();
   document.title = 'SONG ' + id;
 }
-// 真正开始播放时取消静音(比固定100ms定时器更可靠)
-v.onplaying = () => { if (autoMute) { autoMute = false; v.muted = false; } };
+
+// 多次尝试自动播放(自动解除静音); 全部失败则转静音开播
+function attemptPlay() {
+  const p = v.play();
+  if (!p || !p.catch) return;
+  p.then(() => { playRetries = 0; }).catch(() => {
+    playRetries++;
+    if (playRetries < MAX_PLAY_RETRIES) {
+      setTimeout(attemptPlay, 300);
+    } else {
+      playRejected = true;
+      startMutedFallback();
+    }
+  });
+}
+
+// 静音开播 + 显示"按上方向键解除静音"
+function startMutedFallback() {
+  muteFallback = true;
+  v.muted = true;
+  const p = v.play();
+  if (p && p.catch) p.catch(() => {});
+  showHint(true);
+}
+
+// 用户手势解除静音(上方向键 / 播放按钮)
+function unmuteByUser() {
+  if (!muteFallback && !v.muted) return;
+  muteFallback = false;
+  v.muted = false;
+  showHint(false);
+  if (v.paused) v.play().catch(() => {});
+}
 function cmdPlay() {
   if (cur === 0) { loadVideo(1); return; }
   showWarn(false);
+  unmuteByUser();           // 按钮点击=用户手势, 顺带解除静音回退
   v.play().catch(() => {});
 }
 function cmdPause() { v.pause(); }
 function toggleMute() {
   v.muted = !v.muted;
+  if (!v.muted) { muteFallback = false; showHint(false); }
   document.getElementById('muteBtn').textContent = v.muted ? '🔇 静音' : '🔊 已开声';
 }
 function toggleAuto() {
@@ -123,6 +170,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === '2') loadVideo(2);
   else if (e.key.toLowerCase() === 'm') toggleMute();
   else if (e.key.toLowerCase() === 'r') reloadCur();
+  else if (e.key === 'ArrowUp') unmuteByUser();
 });
 
 // WS: 服务器指令(连接即 play 1; ended(id=1) 后 play 2)
@@ -152,6 +200,7 @@ setInterval(() => {
     `<span class="${bad ? 'bad' : 'ok'}">当前: SONG ${cur || '-'} ${playRejected ? '(play被拒!)' : ''}</span>
 muted: ${v.muted} | volume: ${v.volume.toFixed(2)} | paused: ${v.paused}
 readyState: ${v.readyState} | 进度: ${v.currentTime.toFixed(1)}s / ${(v.duration||0).toFixed(1)}s
+播放尝试: ${playRetries}/${MAX_PLAY_RETRIES} | 静音回退: ${muteFallback ? '是(按↑解除)' : '否'}
 自动切歌: ${autoSwitch ? '开' : '关'} | WS: ${ws.readyState === 1 ? '已连' : '断开'}`;
 }, 200);
 </script>
