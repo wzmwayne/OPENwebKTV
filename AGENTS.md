@@ -125,7 +125,9 @@ OPENwebKTV/
   (缺少搜索词/缺少歌曲标题/未找到歌词), 控制端暗红置灰禁止点击; title/duration 由控制端传搜索结果
   (未下载时无 Song 行)否则回退 Song 行; 搜索词回退 Song.search_keyword
 - `POST /api/download|/queue` — 请求体含 `track`(字幕轨序号, 默认0): 下载视频时**同时下载该轨歌词**
-  存入 Song.lyrics; 下载接口幂等(ready/downloading 直接返回)
+  存入 Song.lyrics; 下载接口幂等(ready/downloading 直接返回);
+  **track=-1(无歌词)写入显式标记 '[]': /api/lyrics 直接返回空, 禁止回落B站/第三方兜底显示歌词**
+  (与 ''=未存储会回落兜底 语义不同; 2026-08 修改)
 - `POST /api/admin/verify` {static_password} — 高级操作静态密码验证(常量时间比较); 通过后
   **自动清空播放列表 + 播放端进入阻塞状态**并生成8位动态码(120s, 过期自动换新码)
 - `POST /api/admin/code` {code} — 提交动态码(单次有效) → active(1分钟「是否允许高级操作」授权窗口)
@@ -134,6 +136,10 @@ OPENwebKTV/
 - `POST /api/admin/queue/clear` — 清空播放列表(高级操作)
 - `DELETE /api/admin/songs/{song_id}` — 删除本地歌曲: 数据库行+媒体文件+队列/歌单引用清理; 正在播放则停播;
   并清理该 bvid 的歌词内存缓存(LYRICS_CACHE 全部4类键, api.clear_lyrics_cache)
+- `DELETE /api/admin/songs/{song_id}/lyrics` — 删除歌曲歌词: Song.lyrics 置 '[]'(显式无歌词) +
+  清理该 bvid 全部歌词缓存; 正在播放则广播 lyrics_changed 给播放端即时刷新
+- `POST /api/admin/cache/clear` — 清除所有内存缓存(LYRICS_CACHE+COVER_CACHE), 返回清除数量;
+  不影响使用(下次请求自动重建)
 - **高级操作不做接口级鉴权**(用户指定, LAN 信任模型): 以 admin_auth 全局状态为准, 前端按状态门控
 - `GET /api/login/status` — B站是否已登录 {logged_in, user_id}
 - `GET /api/login/qr` — 生成B站登录二维码 PNG(播放端显示)
@@ -196,7 +202,8 @@ OPENwebKTV/
 - **player.html 歌词(两行滚动)**: 行1在屏幕高度一半**居左**, 行2在行1下方**居右**, 多层**黑色阴影**
   (0 1px 2px/0 2px 6px/0 0 14px rgba黑); 焦点行=当前句(放大+纯白); 滚动规则(用户指定序列):
   偶数句焦点行1+行2滚入下一句, 奇数句焦点行2+行1滚入下一句
-  (验证序列 -1A 2B → 1C -2B → -1C 2D → 1E -2D)。数据源 /api/lyrics/{bvid}
+  (验证序列 -1A 2B → 1C -2B → -1C 2D → 1E -2D)。数据源 /api/lyrics/{bvid};
+  WS lyrics_changed 消息(删歌词操作)触发当前歌即时重拉歌词
 - controller.html: **未登录时全屏锁定覆盖**(z-99, 唯一操作=「刷新二维码」→ /api/login/qr/refresh 广播
   播放端同步换码; 无退出/无关闭按钮), 登录成功自动解锁+toast; 锁定层实时显示扫码状态
 - controller.html: 4 Tab（下载/点歌/播放/设置）；队列支持 ▲▼/置顶/删除
@@ -380,3 +387,16 @@ cd backend && python3 login_server.py
 
 - **2026-08-27 推送+start.py 权限提交**: 推送本地 2 个提交到 origin/main(e9855da..cbc2ce1,
   记忆核对+删歌缓存清理); 随后把积压的 start.py 权限变更 644→755(chmod +x, 内容未动)提交并推送。
+
+- **2026-08-27 两个新高级操作 + 无歌词强制**: ①`DELETE /api/admin/songs/{song_id}/lyrics` 删除歌曲歌词:
+  Song.lyrics 置 **'[]'显式无歌词标记**(区别于 ''=未存储会回落B站/第三方兜底: json.loads('[]')=[] 直接
+  返回空, 不显示任何来源歌词) + clear_lyrics_cache(bvid); 正在播放则 WS 广播 lyrics_changed,
+  播放端即时重拉(不加此消息则切歌才生效)。②`POST /api/admin/cache/clear` 清除全部内存缓存
+  (LYRICS_CACHE+COVER_CACHE, 返回数量, 下次请求自动重建; WBI key 是每实例的/下载进度是运行状态,
+  均非缓存不清)。③**下载 track=-1(无歌词)修改**: 原来存 '' 会回落兜底显示歌词, 现写入 '[]' 强制无歌词。
+  前端: 设置页 active 面板加「🎵删除歌曲歌词(跳点歌页)」「💨清除缓存」两按钮; 本地歌曲列表每行加
+  🎵按钮(与🗑同用 .ls-del, 授权期间统一显隐); 均 confirm 确认+adminState.allowed 守卫。
+  已起服务 curl 验证: 删前74行→删后{"lyrics":[]}/404/缓存计数2条/播放中删歌词ok/DB持久化'[]';
+  track=-1 写入逻辑代码审查+py_compile。**注意(测试教训)**: 验证删歌词端点时真实删掉了库中 id=1
+  的歌词, 已用 B站字幕轨(非AI优先, 与下载逻辑一致, 74行)重新拉取写回恢复, id=10 恢复 ''
+  (回落显示57行)。后续验证破坏性操作前先备份受影响行。
