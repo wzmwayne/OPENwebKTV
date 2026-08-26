@@ -25,7 +25,7 @@ app.add_middleware(
 
 
 def _migrate_song_lyrics():
-    """轻量迁移: 旧库 songs 表补 lyrics 列(无迁移框架, 手动 ALTER)"""
+    """轻量迁移: 旧库 songs 表补 lyrics / search_keyword 列(无迁移框架, 手动 ALTER)"""
     from .database import SessionLocal
     from sqlalchemy import text
     db = SessionLocal()
@@ -35,6 +35,10 @@ def _migrate_song_lyrics():
             db.execute(text("ALTER TABLE songs ADD COLUMN lyrics TEXT"))
             db.commit()
             log.info("数据库迁移: songs 表新增 lyrics 列")
+        if "search_keyword" not in cols:
+            db.execute(text("ALTER TABLE songs ADD COLUMN search_keyword VARCHAR(100)"))
+            db.commit()
+            log.info("数据库迁移: songs 表新增 search_keyword 列")
     finally:
         db.close()
 

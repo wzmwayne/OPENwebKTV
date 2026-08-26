@@ -250,6 +250,7 @@ function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').re
 const ws = new WsClient('/ws/controller', onMessage);
 let state = {current:null, queue:[], status:'idle', position:0};
 let dlItems = [];   // 当前搜索结果(预览详情页用)
+let dlKeyword = ''; // 当前搜索词(下载时随请求发送, 供LRCLIB歌词查询)
 let searchTimers = {dl:null, local:null};
 let localSongsCache = [];
 
@@ -389,6 +390,7 @@ function openLogin() {
 document.getElementById('dlSearchInput').addEventListener('input', (e) => {
   if (searchTimers.dl) clearTimeout(searchTimers.dl);
   const q = e.target.value.trim();
+  dlKeyword = q;
   if (q.length < 1) { document.getElementById('dlResults').innerHTML = ''; return; }
   searchTimers.dl = setTimeout(() => doDlSearch(q), 300);
 });
@@ -480,15 +482,18 @@ function resetDetailProgress() {
 async function loadDetailTracks(bvid) {
   detailTracks = [];
   try {
-    const d = await (await fetch('/api/lyrics/tracks/' + bvid)).json();
+    const d = await (await fetch('/api/lyrics/tracks/' + bvid + '?keyword=' + encodeURIComponent(dlKeyword))).json();
     detailTracks = d.tracks || [];
   } catch(e) {}
+  // 默认选中第一项(B站轨或第三方)
+  detailTrackIdx = detailTracks.length ? detailTracks[0].index : -1;
   const box = document.getElementById('dvTracks');
   if (detailTracks.length >= 1) {
     box.classList.remove('hidden');
-    box.innerHTML = '<span class="t-label">字幕轨:</span>' + detailTracks.map((t, idx) =>
-      `<button data-track="${idx}" class="${idx === 0 ? 'on' : ''}" onclick="selectTrack(${idx})">${esc(t.lan_doc || t.lan || ('轨' + idx))}${t.ai ? '(AI)' : ''}</button>`
-    ).join('') +
+    box.innerHTML = '<span class="t-label">歌词:</span>' + detailTracks.map((t) => {
+      const label = (t.kind === 'lrclib') ? t.lan_doc : (t.lan_doc || t.lan || '歌词');
+      return `<button data-track="${t.index}" class="${t.index === detailTrackIdx ? 'on' : ''}" onclick="selectTrack(${t.index})">${esc(label)}${t.ai ? '(AI)' : ''}</button>`;
+    }).join('') +
       `<button data-track="-1" class="${detailTrackIdx === -1 ? 'on' : ''}" onclick="selectTrack(-1)">无歌词</button>`;
   } else {
     box.classList.add('hidden');
@@ -506,11 +511,10 @@ function selectTrack(idx) {
 
 async function loadDetailLyrics(bvid, track) {
   const el = document.getElementById('dvLyrics');
-  if (track < 0) { el.textContent = '无歌词'; return; }
+  if (track === -1) { el.textContent = '无歌词'; return; }
   el.textContent = '加载中...';
   try {
-    const q = track >= 0 ? ('?track=' + track) : '';
-    const d = await (await fetch('/api/lyrics/' + bvid + q)).json();
+    const d = await (await fetch('/api/lyrics/' + bvid + '?track=' + track)).json();
     const ls = d.lyrics || [];
     if (!ls.length) { el.textContent = '无歌词'; return; }
     el.innerHTML = ls.map(l =>
@@ -524,7 +528,7 @@ function detailDownload() {
   const btn = document.getElementById('dvDownloadBtn');
   btn.disabled = true;
   fetch('/api/download', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({bvid: detailBvid, track: detailTrackIdx})})
+    body: JSON.stringify({bvid: detailBvid, track: detailTrackIdx, keyword: dlKeyword})})
     .then(r => r.json()).then(d => {
       if (d.status === 'already_downloaded') { showToast('已下载过'); finishDetail(); }
       else if (d.status === 'downloading') { showToast('开始下载'); showDetailProgress(1, '1%'); }

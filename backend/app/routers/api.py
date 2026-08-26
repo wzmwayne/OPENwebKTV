@@ -74,27 +74,70 @@ def _lines_to_json(lines) -> str:
 
 
 @router.get("/lyrics/tracks/{bvid}")
-async def lyric_tracks(bvid: str):
-    """列出视频的字幕轨(供控制端选择); 仅返回有下载地址的轨"""
+async def lyric_tracks(bvid: str, keyword: str = "", db: Session = Depends(get_db)):
+    """列出歌词来源选项(供控制端同级选择):
+    - B站字幕轨(index >= 0, 带 ai 标记)
+    - 第三方LRCLIB(用户搜索词, index=-2; 有关键词时列出)
+    - 第三方LRCLIB(标题提取, index=-3; 提取失败或LRCLIB无结果则隐藏)
+    """
     try:
         async with BilibiliClient(cookie_path=settings.BILIBILI_COOKIE) as client:
             tracks = await client.subtitles(bvid)
     except Exception as e:
         log.warning(f"获取字幕轨失败 {bvid}: {e}")
         tracks = []
-    return {"tracks": [
-        {"index": i, "lan": t.lan, "lan_doc": t.lan_doc, "ai": t.ai}
+    result = [
+        {"index": i, "lan": t.lan, "lan_doc": t.lan_doc, "ai": t.ai, "kind": "bili"}
         for i, t in enumerate(tracks) if t.url
-    ]}
+    ]
+    if (keyword or "").strip():
+        result.append({"index": -2, "lan": "lrclib", "lan_doc": "第三方歌词(搜索词)",
+                       "ai": False, "kind": "lrclib"})
+    song = db.query(Song).filter(Song.bvid == bvid).first()
+    if song and song.title:
+        # 标题提取的第三方歌词: 失败(解析不出/LRCLIB无结果)则隐藏; 结果缓存复用
+        key = f"lrc-t:{bvid}"
+        if key not in LYRICS_CACHE:
+            lrclines = await fetch_lrclib_lyrics(song.title, song.duration, "", mode="title")
+            LYRICS_CACHE[key] = [
+                {"start": l.start, "end": l.end, "text": l.text} for l in lrclines
+            ]
+        if LYRICS_CACHE[key]:
+            result.append({"index": -3, "lan": "lrclib", "lan_doc": "第三方歌词(标题)",
+                           "ai": False, "kind": "lrclib"})
+    return {"tracks": result}
 
 
 @router.get("/lyrics/{bvid}")
 async def get_song_lyrics(bvid: str, track: int = -1, db: Session = Depends(get_db)):
     """获取歌词(带时间轴)。
 
-    - track < 0(默认): 优先返回下载时存储的歌词(Song.lyrics), 否则取第一条有地址的字幕轨
-    - track >= 0: 取指定字幕轨内容(控制端预览切换用)
+    - track = -2: 第三方LRCLIB, 用户搜索词优先
+    - track = -3: 第三方LRCLIB, 标题提取
+    - track < 0(默认-1): 优先返回下载时存储的歌词(Song.lyrics), 否则B站字幕(非AI优先), 再LRCLIB兜底
+    - track >= 0: 取指定B站字幕轨内容(控制端预览切换用)
     """
+    if track == -2:
+        key = f"lrc-k:{bvid}"
+        if key not in LYRICS_CACHE:
+            song = db.query(Song).filter(Song.bvid == bvid).first()
+            lrclines = await fetch_lrclib_lyrics(
+                song.title if song else "", song.duration if song else 0,
+                (song.search_keyword if song else "") or "", mode="keyword")
+            LYRICS_CACHE[key] = [
+                {"start": l.start, "end": l.end, "text": l.text} for l in lrclines
+            ]
+        return {"lyrics": LYRICS_CACHE[key]}
+    if track == -3:
+        key = f"lrc-t:{bvid}"
+        if key not in LYRICS_CACHE:
+            song = db.query(Song).filter(Song.bvid == bvid).first()
+            lrclines = await fetch_lrclib_lyrics(
+                song.title if song else "", song.duration if song else 0, "", mode="title")
+            LYRICS_CACHE[key] = [
+                {"start": l.start, "end": l.end, "text": l.text} for l in lrclines
+            ]
+        return {"lyrics": LYRICS_CACHE[key]}
     if track < 0:
         song = db.query(Song).filter(Song.bvid == bvid).first()
         if song and song.lyrics:
@@ -126,7 +169,8 @@ async def get_song_lyrics(bvid: str, track: int = -1, db: Session = Depends(get_
         song = db.query(Song).filter(Song.bvid == bvid).first()
         if song and song.title:
             try:
-                lrclines = await fetch_lrclib_lyrics(song.title, song.duration)
+                lrclines = await fetch_lrclib_lyrics(
+                    song.title, song.duration, song.search_keyword or "")
                 data = [{"start": l.start, "end": l.end, "text": l.text} for l in lrclines]
                 if data:
                     log.info(f"LRCLIB兜底歌词: {bvid} ({len(data)}行)")
@@ -174,7 +218,7 @@ def _has_video_stream(path: str) -> bool:
         return True  # ffprobe 不可用/异常时按有视频处理, 保持原行为
 
 
-async def _run_download(song_id: int, bvid: str, track: int = 0):
+async def _run_download(song_id: int, bvid: str, track: int = 0, keyword: str = ""):
     from ..database import SessionLocal
     from ..bilibili import clear_dl_progress
     db = SessionLocal()
@@ -184,6 +228,8 @@ async def _run_download(song_id: int, bvid: str, track: int = 0):
             return
         song_title = s.title
         song_duration = s.duration or 0
+        if keyword:
+            s.search_keyword = keyword
         s.download_status = "downloading"
         db.commit()
         await player_engine.broadcast_state()
@@ -204,11 +250,21 @@ async def _run_download(song_id: int, bvid: str, track: int = 0):
                         lines = await client.subtitle_content(tracks[idx].url)
                         lyrics_json = _lines_to_json(lines)
                     if not lyrics_json and song_title:
-                        # LRCLIB 免费歌词兜底
-                        lrclines = await fetch_lrclib_lyrics(song_title, song_duration)
+                        # B站无歌词时: LRCLIB 兜底(用户搜索词 + 标题)
+                        lrclines = await fetch_lrclib_lyrics(song_title, song_duration, keyword)
                         lyrics_json = _lines_to_json(lrclines)
                 except Exception as e:
                     log.warning(f"歌词下载失败 {bvid}: {e}")
+            elif track == -2 or track == -3:
+                # 第三方LRCLIB: 搜索词(-2) / 标题提取(-3)
+                try:
+                    mode = "keyword" if track == -2 else "title"
+                    kw = keyword if track == -2 else ""
+                    lrclines = await fetch_lrclib_lyrics(song_title, song_duration, kw, mode=mode)
+                    lyrics_json = _lines_to_json(lrclines)
+                except Exception as e:
+                    log.warning(f"LRCLIB歌词下载失败 {bvid}: {e}")
+            # track == -1: 不带歌词
         db = SessionLocal()
         s = db.query(Song).filter(Song.id == song_id).first()
         if s:
@@ -277,7 +333,7 @@ async def download_song(body: QueueAddRequest, db: Session = Depends(get_db)):
     song = await _ensure_song(body.bvid, db)
     if song.download_status == "ready":
         return {"status": "already_downloaded", "song_id": song.id}
-    asyncio.create_task(_run_download(song.id, body.bvid, body.track))
+    asyncio.create_task(_run_download(song.id, body.bvid, body.track, body.keyword))
     return {"status": "downloading", "song_id": song.id}
 
 
@@ -298,7 +354,7 @@ async def add_queue(body: QueueAddRequest, db: Session = Depends(get_db)):
         raise HTTPException(400, "队列已满(上限50首)")
     if result == "exists":
         raise HTTPException(409, "歌曲已在队列中")
-    asyncio.create_task(_run_download(song.id, body.bvid, body.track))
+    asyncio.create_task(_run_download(song.id, body.bvid, body.track, body.keyword))
     return {"item_id": item_id}
 
 

@@ -17,6 +17,7 @@ class Song(Base):
     file_size = Column(BigInteger, default=0)
     download_status = Column(String(20), default="pending")
     lyrics = Column(Text, default="")   # 下载时同时保存的歌词(JSON: [{start,end,text}])
+    search_keyword = Column(String(100), default="")   # 用户搜索词(LRCLIB歌词查询用)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
