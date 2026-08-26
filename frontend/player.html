@@ -35,6 +35,10 @@ video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:contain}
 #coverLayer img{width:min(60vw,60vh);border-radius:12px;box-shadow:0 0 40px rgba(0,0,0,.6)}
 #coverLayer .cover-badge{position:absolute;bottom:14%;font-size:13px;color:rgba(255,255,255,.4);
   background:rgba(0,0,0,.5);padding:4px 12px;border-radius:10px}
+#unmuteHint{position:fixed;bottom:8%;left:50%;transform:translateX(-50%);z-index:8;
+  background:rgba(124,92,252,.92);color:#fff;padding:10px 22px;border-radius:10px;
+  font-size:15px;display:none;white-space:nowrap;animation:hintblink 1.2s infinite}
+@keyframes hintblink{0%,100%{opacity:1}50%{opacity:.55}}
 </style>
 </head>
 <body>
@@ -47,6 +51,7 @@ video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:contain}
 
 <video id="playerVideo" playsinline></video>
 <div id="coverLayer" class="hidden"><img id="coverImg" alt=""><div class="cover-badge">音频模式</div></div>
+<div id="unmuteHint">按 回车 / OK / 空格 解除静音</div>
 
 <div id="qrWrap"><img id="qrImg" src="/api/qr/controller" alt="QR"><div class="ql">扫码控制</div></div>
 <div class="status-badge" id="statusBadge">未连接</div>
@@ -56,12 +61,19 @@ video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:contain}
 const video = document.getElementById('playerVideo');
 const ws = new WsClient('/ws/player', onMessage);
 
+// 屏蔽视频组件自身的键盘行为(回车/空格暂停等原生响应), 只保留页面层自定义按键
+video.tabIndex = -1;                       // 视频不可通过键盘聚焦
+video.addEventListener('keydown', (e) => { e.preventDefault(); });  // 元素级拦截所有按键
+
 let currentSong = null;
 let lastSentPos = 0;
 let songEndSent = false;
 let retryCount = 0;
 let retryTimer = null;
+let muteFallback = false;
+let playRetries = 0;
 const MAX_RETRIES = 10;
+const MAX_PLAY_RETRIES = 3;
 
 ws.onConnect = () => {
   document.getElementById('idleScreen').classList.add('hidden');
@@ -70,6 +82,7 @@ ws.onConnect = () => {
 
 function loadVideo(song) {
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  video.blur();   // 主动失焦: 焦点若在视频上, 回车会触发组件原生暂停
   video.pause();
   video.removeAttribute('src');
   video.load();
@@ -77,13 +90,14 @@ function loadVideo(song) {
   lastSentPos = 0;
   document.getElementById('songTitle').textContent = song.title || '';
   document.getElementById('songTitle').classList.remove('hidden');
-  video.muted = true;
+  muteFallback = false;
+  playRetries = 0;
+  hideUnmuteHint();
+  video.muted = false;   // 第一步: 先尝试直接有声播放
   video.src = `/api/media/${song.id}`;
   video.load();
   try { video.currentTime = 0; } catch(e) {}
-  video.play().then(() => {
-    setTimeout(() => { video.muted = false; }, 100);
-  }).catch(() => {});
+  attemptPlay();
   songEndSent = false;
   retryCount = 0;
   // 纯音频(无视频轨)时显示封面兜底, 避免黑屏只有声音
@@ -95,6 +109,52 @@ function loadVideo(song) {
     cover.classList.add('hidden');
   }
 }
+
+// 静音方案: 先多次尝试有声自动播放; 全部失败则静音开播并提示按键解除
+function attemptPlay() {
+  const p = video.play();
+  if (!p || !p.catch) return;
+  p.then(() => { playRetries = 0; }).catch(() => {
+    playRetries++;
+    if (playRetries < MAX_PLAY_RETRIES) {
+      setTimeout(attemptPlay, 300);
+    } else {
+      startMutedFallback();
+    }
+  });
+}
+
+function startMutedFallback() {
+  muteFallback = true;
+  video.muted = true;
+  const p = video.play();
+  if (p && p.catch) p.catch(() => {});
+  showUnmuteHint();
+}
+
+// 用户手势解除静音(回车/OK/空格; 遥控器方向键可能不触发页面事件)
+function unmuteByUser() {
+  if (!muteFallback && !video.muted) return;
+  muteFallback = false;
+  video.muted = false;
+  hideUnmuteHint();
+  if (video.paused) video.play().catch(() => {});
+}
+
+function showUnmuteHint() {
+  document.getElementById('unmuteHint').style.display = 'block';
+}
+function hideUnmuteHint() {
+  document.getElementById('unmuteHint').style.display = 'none';
+}
+
+document.addEventListener('keydown', (e) => {
+  const isEnter = e.key === 'Enter' || e.code === 'Enter' || e.key === 'OK' || e.key === 'NumpadEnter';
+  if (isEnter || e.code === 'Space') {
+    e.preventDefault();
+    if (muteFallback) unmuteByUser();
+  }
+});
 
 function onMessage(msg) {
   switch (msg.type) {
@@ -122,6 +182,7 @@ function onMessage(msg) {
         currentSong = null;
         document.getElementById('songTitle').classList.add('hidden');
         document.getElementById('coverLayer').classList.add('hidden');
+        hideUnmuteHint();
         video.pause();
         video.removeAttribute('src');
         video.load();
