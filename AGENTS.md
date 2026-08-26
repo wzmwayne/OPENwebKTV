@@ -14,7 +14,7 @@
 1. 读完本文件（这是唯一记忆源）。
 2. **建/改文件一律用 bash（cat heredoc / printf）直接写**，勿用内置写工具；git add/commit 正常。
 3. 需要启动服务：`python start.py`（依赖/端口见 §4；无 venv，用系统 Python 3.13）。
-4. 需要搜索/下载 B 站内容：先通过 `login_server.py` 二维码登录拿到 `bilibili_cookie.json`（§3.5）；当前**尚未登录**。
+4. 需要搜索/下载 B 站内容：先通过 `login_server.py` 二维码登录拿到 `bilibili_cookie.json`（§3.5）；**已登录**（bilibili_cookie.json 已存在，见 §6.1）。
 5. 动手前先 `git status` / `git log` 确认当前进度（仓库目前只有 initial commit + AGENTS.md 提交）。
 6. 前端是纯静态无构建；Android 端需 Gradle 构建（无 local.properties，未配置）。
 7. 改完代码后：若新增认知，按 §7 格式追加到本文件，并 `git add AGENTS.md && git commit`。
@@ -50,7 +50,7 @@ OPENwebKTV/
 │   ├── login_server.py          # 独立 B 站二维码登录服务器 (端口 8888，另起进程)
 │   ├── requirements.txt         # fastapi/uvicorn/httpx/sqlalchemy/aiosqlite/pydantic/python-multipart
 │   ├── data/                    # 运行时生成(被 gitignore): openwebktv.db + media/ 下载目录（当前尚不存在=从未启动过）
-│   ├── bilibili_cookie.json     # B 站登录凭证(被 gitignore)（当前不存在=未登录）
+│   ├── bilibili_cookie.json     # B 站登录凭证(被 gitignore)（已存在=已登录，2026-08 确认）
 │   ├── app/
 │   │   ├── main.py              # FastAPI 入口: CORS 全开、启动时建库+队列去重+启动轮询、挂载前端静态
 │   │   ├── config.py            # Settings: HOST=0.0.0.0 PORT=8080 DB/MEDIA/FRONTEND 路径, MAX_QUEUE_SIZE=50
@@ -241,7 +241,8 @@ cd backend && python3 login_server.py
 
 ### 6.1 本机环境（2025 采集）
 - Python 3.13.5（系统级，无 venv）；Node v22.23.2；ffmpeg 7.1.5 ✓
-- `backend/data/`（SQLite 数据库 + media/ 媒体）与 `bilibili_cookie.json`（B站登录凭证）为本地运行生成，均被 gitignore
+- `backend/data/`（SQLite 数据库 + media/ 媒体）与 `bilibili_cookie.json`（B站登录凭证）为本地运行生成，均被 gitignore；
+  2026-08 确认：数据库已建、media/ 已有 9 个下载视频（原神系列/《玻璃》/《晚安》等）、cookie 已登录（user_id 3546822289131703）
 - Android 构建未配置（无 `local.properties`，需 SDK 路径才能 gradle build）
 
 ### 6.2 已知注意点/潜在坑（重要）
@@ -361,3 +362,8 @@ cd backend && python3 login_server.py
   及其系统文件路径), 保留通用操作约定(建/改文件一律用 bash 直接写)。
 
 <!-- 后续会话在此追加: 日期 + 做了什么 + 结论/约定/坑；改完记得 git add AGENTS.md 并提交 -->
+
+- **2026-08-27 会话恢复(记忆核对)**: 恢复会话时对照仓库实际状态核对记忆: ①AGENTS.md 原记
+  「尚未登录」已过期——bilibili_cookie.json 已存在且有效(SESSDATA 齐, user_id 3546822289131703);
+  ②backend/data/ 已建库, media/ 已有 9 首已下载视频(原神系列/玻璃/晚安 等)。已同步更新
+  §0.4/§2/§6.1 相关表述。另: 工作区 start.py 仅文件权限变更 644→755(内容未动), 未提交。
