@@ -45,7 +45,7 @@ video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:contain}
 
 <div id="idleScreen">
   <div class="logo">♫</div>
-  <div>等待连接...</div>
+  <div id="idleMsg">等待连接...</div>
   <div class="sub">请用手机打开控制器页面点歌</div>
 </div>
 
@@ -87,6 +87,7 @@ function loadVideo(song) {
   const gen = loadGen;
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
   if (playRetryTimer) { clearTimeout(playRetryTimer); playRetryTimer = null; }
+  document.getElementById('idleScreen').classList.add('hidden');   // 有新歌即收起空闲屏
   video.blur();   // 主动失焦: 焦点若在视频上, 回车会触发组件原生暂停
   video.pause();
   video.removeAttribute('src');
@@ -160,6 +161,12 @@ function syncUnmuteHint() {
 video.addEventListener('volumechange', syncUnmuteHint);   // muted 变化立即同步
 setInterval(syncUnmuteHint, 500);                         // 兜底轮询(浏览器强制静音等)
 
+// 空闲屏: 动态文案(连接中 / 请点歌播放)
+function showIdle(msg) {
+  document.getElementById('idleMsg').textContent = msg;
+  document.getElementById('idleScreen').classList.remove('hidden');
+}
+
 document.addEventListener('keydown', (e) => {
   const isEnter = e.key === 'Enter' || e.code === 'Enter' || e.key === 'OK' || e.key === 'NumpadEnter';
   if (isEnter || e.code === 'Space') {
@@ -172,6 +179,7 @@ function onMessage(msg) {
   switch (msg.type) {
     case 'play':
       if (msg.song) loadVideo(msg.song);
+      else showIdle('请点歌播放');
       break;
     case 'pause':
       video.pause();
@@ -194,6 +202,7 @@ function onMessage(msg) {
         currentSong = null;
         document.getElementById('songTitle').classList.add('hidden');
         document.getElementById('coverLayer').classList.add('hidden');
+        showIdle('请点歌播放');
         video.muted = false;   // 清空时复位静音, 避免空闲屏误提示
         syncUnmuteHint();
         video.pause();

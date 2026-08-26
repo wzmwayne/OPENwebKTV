@@ -63,7 +63,12 @@ class PlayerEngine:
     async def play(self):
         async with self._play_lock:
             if not self._current_song and not await self._load_next():
-                log.info("队列为空，无法播放")
+                # 队列为空: 进入空闲并广播通知前端; 探测循环(poll_loop)会持续探测新歌,
+                # 与启动时行为一致(仅在状态转换时广播, 避免每秒刷屏)
+                if self._status != "idle":
+                    self._status = "idle"
+                    log.info("队列为空，进入空闲等待")
+                    await self.broadcast_state()
                 return
             self._position = 0
             self._status = "playing"
