@@ -557,3 +557,76 @@ class BilibiliClient:
 
     async def __aexit__(self, *args):
         await self.close()
+
+
+# ── LRCLIB 免费歌词兜底(无需API key, 同步LRC歌词) ──────────────────
+
+_LRC_UA = "OPENwebKTV/0.1 (LAN KTV)"
+
+
+def guess_song_meta(title: str) -> tuple[str, str]:
+    """从B站标题猜测 (track, artist): 优先《歌名》+ '- 歌手' 模式"""
+    m = re.search(r"[《「]([^》」]{1,30})[》」]", title or "")
+    track = m.group(1).strip() if m else ""
+    artist = ""
+    if m:
+        rest = title[m.end():]
+        am = re.search(r"[-–—|\s]\s*([A-Za-z0-9\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff .·]{1,30})", rest)
+        if am:
+            artist = am.group(1).strip().rstrip("-–—")
+    if not track:
+        return "", ""
+    return track, artist
+
+
+def parse_lrc(lrc: str) -> list[SubtitleLine]:
+    """LRC 文本 → SubtitleLine 列表(按时间排序, end取下一句start, 最后一句+2s)"""
+    raw = []
+    for line in (lrc or "").splitlines():
+        mm = re.match(r"\[(\d+):(\d{1,2}(?:\.\d{1,3})?)\](.*)", line.strip())
+        if mm:
+            t = int(mm.group(1)) * 60 + float(mm.group(2))
+            raw.append((t, mm.group(3).strip()))
+    raw.sort(key=lambda x: x[0])
+    out = []
+    for i, (t, text) in enumerate(raw):
+        end = raw[i + 1][0] if i + 1 < len(raw) else t + 2.0
+        out.append(SubtitleLine(start=t, end=end, text=text))
+    return out
+
+
+async def fetch_lrclib_lyrics(title: str, duration: int = 0) -> list[SubtitleLine]:
+    """LRCLIB(lrclib.net)免费歌词: 无key无限制(建议缓存), 失败/无歌词返回 []"""
+    track, artist = guess_song_meta(title)
+    if not track:
+        return []
+    headers = {"User-Agent": _LRC_UA}
+    try:
+        async with httpx.AsyncClient(headers=headers, timeout=15) as c:
+            params = {"artist_name": artist, "track_name": track}
+            if duration:
+                params["duration"] = int(duration)
+            r = await c.get("https://lrclib.net/api/get", params=params)
+            if r.status_code == 200 and r.content:
+                d = r.json()
+                if d and d.get("syncedLyrics"):
+                    log.info(f"LRCLIB歌词: {artist} - {track}")
+                    return parse_lrc(d["syncedLyrics"])
+            # 搜索兜底: 按时长最接近取
+            r2 = await c.get("https://lrclib.net/api/search",
+                             params={"q": f"{track} {artist}".strip()})
+            if r2.status_code == 200:
+                best = None
+                for it in r2.json():
+                    if it.get("instrumental") or not it.get("syncedLyrics"):
+                        continue
+                    d2 = it.get("duration") or 0
+                    score = abs(d2 - duration) if duration else 0
+                    if best is None or score < best[0]:
+                        best = (score, it)
+                if best:
+                    log.info(f"LRCLIB歌词(搜索): {best[1].get('artistName')} - {best[1].get('trackName')}")
+                    return parse_lrc(best[1]["syncedLyrics"])
+    except Exception as e:
+        log.warning(f"LRCLIB歌词获取失败: {e}")
+    return []

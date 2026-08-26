@@ -211,7 +211,7 @@ function loadVideo(song) {
   // 纯音频(无视频轨)时显示封面兜底, 避免黑屏只有声音
   const cover = document.getElementById('coverLayer');
   if (song.download_status === 'audio_only' && song.cover) {
-    document.getElementById('coverImg').src = song.cover;
+    document.getElementById('coverImg').src = '/api/cover?url=' + encodeURIComponent(song.cover);
     cover.classList.remove('hidden');
   } else {
     cover.classList.add('hidden');

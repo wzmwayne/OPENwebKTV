@@ -416,7 +416,7 @@ function renderDlResults(items) {
   el.innerHTML = items.map((item, i) => {
     const m = Math.floor(item.duration/60), s = item.duration%60;
     return `<div class="result-item">
-      <img src="${esc(item.cover||'')}" alt="" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 48%22><rect fill=%22%232a2a3a%22 width=%2264%22 height=%2248%22/></svg>'">
+      <img src="/api/cover?url=${encodeURIComponent(item.cover||'')}" alt="" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 48%22><rect fill=%22%232a2a3a%22 width=%2264%22 height=%2248%22/></svg>'">
       <div class="result-info">
         <div class="rtitle">${esc(item.title)}</div>
         <div class="rauthor">${esc(item.author)}</div>

@@ -3,6 +3,7 @@ import io
 import json
 import os
 import logging
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
@@ -14,11 +15,50 @@ from ..schemas import (
     QueueAddRequest, ReorderRequest, PlaylistCreate,
 )
 from ..player_engine import player_engine
-from ..bilibili import BilibiliClient
+from ..bilibili import BilibiliClient, fetch_lrclib_lyrics
 from ..config import settings
 
 router = APIRouter(prefix="/api")
 log = logging.getLogger("owk.api")
+
+
+# ── 封面代理 ────────────────────────────────────────
+
+COVER_CACHE: dict[str, tuple[str, bytes]] = {}   # url -> (content_type, data)
+ALLOWED_COVER_HOSTS = ("hdslb.com", "bilibili.com", "biliimg.com", "hdslb.net")
+
+
+@router.get("/cover")
+async def proxy_cover(url: str):
+    """代理B站封面图片: 绕过热链保护(带UA+Referer), 内存缓存, 仅允许B站图片域名(防SSRF)"""
+    from urllib.parse import urlparse
+    host = (urlparse(url).hostname or "").lower()
+    if not any(host == h or host.endswith("." + h) for h in ALLOWED_COVER_HOSTS):
+        raise HTTPException(400, "非法的封面URL")
+    if url in COVER_CACHE:
+        ct, data = COVER_CACHE[url]
+        return Response(content=data, media_type=ct)
+    try:
+        async with httpx.AsyncClient(
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/131.0.0.0 Safari/537.36"
+                ),
+                "Referer": "https://www.bilibili.com/",
+            },
+            timeout=15, follow_redirects=True,
+        ) as c:
+            r = await c.get(url)
+            r.raise_for_status()
+        data = r.content
+        ct = r.headers.get("content-type", "image/jpeg") or "image/jpeg"
+        COVER_CACHE[url] = (ct, data)
+        return Response(content=data, media_type=ct)
+    except Exception as e:
+        log.warning(f"封面获取失败 {url[:60]}: {e}")
+        raise HTTPException(404, "封面获取失败")
 
 
 # ── 歌词 ────────────────────────────────────────────
@@ -81,6 +121,17 @@ async def get_song_lyrics(bvid: str, track: int = -1, db: Session = Depends(get_
     except Exception as e:
         log.warning(f"获取歌词失败 {bvid}: {e}")
     data = [{"start": l.start, "end": l.end, "text": l.text} for l in lines]
+    if not data:
+        # LRCLIB 免费歌词兜底(B站无字幕/为空时)
+        song = db.query(Song).filter(Song.bvid == bvid).first()
+        if song and song.title:
+            try:
+                lrclines = await fetch_lrclib_lyrics(song.title, song.duration)
+                data = [{"start": l.start, "end": l.end, "text": l.text} for l in lrclines]
+                if data:
+                    log.info(f"LRCLIB兜底歌词: {bvid} ({len(data)}行)")
+            except Exception as e:
+                log.warning(f"LRCLIB兜底失败 {bvid}: {e}")
     LYRICS_CACHE[key] = data
     return {"lyrics": data}
 
@@ -131,6 +182,8 @@ async def _run_download(song_id: int, bvid: str, track: int = 0):
         s = db.query(Song).filter(Song.id == song_id).first()
         if not s or s.download_status in ("ready", "downloading"):
             return
+        song_title = s.title
+        song_duration = s.duration or 0
         s.download_status = "downloading"
         db.commit()
         await player_engine.broadcast_state()
@@ -150,6 +203,10 @@ async def _run_download(song_id: int, bvid: str, track: int = 0):
                         idx = track if 0 <= track < len(tracks) else 0
                         lines = await client.subtitle_content(tracks[idx].url)
                         lyrics_json = _lines_to_json(lines)
+                    if not lyrics_json and song_title:
+                        # LRCLIB 免费歌词兜底
+                        lrclines = await fetch_lrclib_lyrics(song_title, song_duration)
+                        lyrics_json = _lines_to_json(lrclines)
                 except Exception as e:
                     log.warning(f"歌词下载失败 {bvid}: {e}")
         db = SessionLocal()
