@@ -108,22 +108,25 @@ ws.onConnect = () => {
 
 // ── B站登录(未登录时显示二维码, 扫码成功后保存cookie并自动恢复) ──
 let loginPollTimer = null;
+let loginActive = false;    // 防并发 checkLogin 重复生成二维码(key 覆盖导致"一直等待扫码")
 
 async function checkLogin() {
   try {
     const r = await fetch('/api/login/status');
     const d = await r.json();
-    if (d.logged_in) hideLoginOverlay();
-    else showLoginOverlay();
+    if (d.logged_in) { if (loginActive) hideLoginOverlay(); }
+    else if (!loginActive) showLoginOverlay();
   } catch(e) {}
 }
 
 function showLoginOverlay() {
+  loginActive = true;
   document.getElementById('loginOverlay').classList.remove('hidden');
   refreshLoginQr();
 }
 
 function hideLoginOverlay() {
+  loginActive = false;
   document.getElementById('loginOverlay').classList.add('hidden');
   stopLoginPoll();
 }
@@ -141,6 +144,8 @@ function stopLoginPoll() {
   if (loginPollTimer) { clearInterval(loginPollTimer); loginPollTimer = null; }
 }
 
+let loginAutoRefreshAt = 0;
+
 async function pollLogin() {
   try {
     const r = await fetch('/api/login/poll');
@@ -149,6 +154,12 @@ async function pollLogin() {
     st.textContent = d.message || d.status;
     if (d.status === 'expired' || d.status === 'error') {
       st.className = 'login-status expired';
+      // 自动刷新新二维码(冷却5秒, 防止循环刷爆)
+      const now = Date.now();
+      if (now > loginAutoRefreshAt) {
+        loginAutoRefreshAt = now + 5000;
+        setTimeout(refreshLoginQr, 1200);
+      }
     } else if (d.status === 'success') {
       st.textContent = '登录成功! 即将继续...';
       st.className = 'login-status';
@@ -258,6 +269,9 @@ function onMessage(msg) {
     case 'play':
       if (msg.song) loadVideo(msg.song);
       else showIdle('请点歌播放');
+      break;
+    case 'login_refresh':
+      if (loginActive) refreshLoginQr();   // 控制端刷新二维码时, 播放端同步更新
       break;
     case 'pause':
       video.pause();
