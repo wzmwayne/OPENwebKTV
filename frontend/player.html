@@ -51,7 +51,7 @@ video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:contain}
 
 <video id="playerVideo" playsinline></video>
 <div id="coverLayer" class="hidden"><img id="coverImg" alt=""><div class="cover-badge">音频模式</div></div>
-<div id="unmuteHint">按 回车 / OK / 空格 解除静音</div>
+<div id="unmuteHint">按 回车 / OK / 空格 开启声音</div>
 
 <div id="qrWrap"><img id="qrImg" src="/api/qr/controller" alt="QR"><div class="ql">扫码控制</div></div>
 <div class="status-badge" id="statusBadge">未连接</div>
@@ -72,6 +72,8 @@ let retryCount = 0;
 let retryTimer = null;
 let muteFallback = false;
 let playRetries = 0;
+let loadGen = 0;            // 换源代际: 旧代异步回调(重试/静音回退)不得影响新歌
+let playRetryTimer = null;
 const MAX_RETRIES = 10;
 const MAX_PLAY_RETRIES = 3;
 
@@ -81,7 +83,10 @@ ws.onConnect = () => {
 };
 
 function loadVideo(song) {
+  loadGen++;                                  // 新歌 = 新一代, 旧代回调全部失效
+  const gen = loadGen;
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  if (playRetryTimer) { clearTimeout(playRetryTimer); playRetryTimer = null; }
   video.blur();   // 主动失焦: 焦点若在视频上, 回车会触发组件原生暂停
   video.pause();
   video.removeAttribute('src');
@@ -92,12 +97,12 @@ function loadVideo(song) {
   document.getElementById('songTitle').classList.remove('hidden');
   muteFallback = false;
   playRetries = 0;
-  hideUnmuteHint();
   video.muted = false;   // 第一步: 先尝试直接有声播放
+  syncUnmuteHint();
   video.src = `/api/media/${song.id}`;
   video.load();
   try { video.currentTime = 0; } catch(e) {}
-  attemptPlay();
+  attemptPlay(gen);
   songEndSent = false;
   retryCount = 0;
   // 纯音频(无视频轨)时显示封面兜底, 避免黑屏只有声音
@@ -110,49 +115,56 @@ function loadVideo(song) {
   }
 }
 
-// 静音方案: 先多次尝试有声自动播放; 全部失败则静音开播并提示按键解除
-function attemptPlay() {
+// 静音方案: 先多次尝试有声自动播放; 全部失败则静音开播并提示按键开启
+function attemptPlay(gen) {
   const p = video.play();
   if (!p || !p.catch) return;
-  p.then(() => { playRetries = 0; }).catch(() => {
+  p.then(() => {
+    if (gen !== loadGen) return;
+    playRetries = 0;
+  }).catch(() => {
+    if (gen !== loadGen) return;                          // 旧代链失效, 不得影响新歌
+    if (!video.paused && video.currentTime > 0.3) return; // 已在播放: 绝不静音
     playRetries++;
     if (playRetries < MAX_PLAY_RETRIES) {
-      setTimeout(attemptPlay, 300);
+      playRetryTimer = setTimeout(() => { playRetryTimer = null; attemptPlay(gen); }, 300);
     } else {
-      startMutedFallback();
+      startMutedFallback(gen);
     }
   });
 }
 
-function startMutedFallback() {
+function startMutedFallback(gen) {
+  if (gen !== loadGen) return;
   muteFallback = true;
   video.muted = true;
   const p = video.play();
   if (p && p.catch) p.catch(() => {});
-  showUnmuteHint();
+  syncUnmuteHint();
 }
 
-// 用户手势解除静音(回车/OK/空格; 遥控器方向键可能不触发页面事件)
+// 用户手势开启声音(回车/OK/空格; 遥控器方向键可能不触发页面事件)
 function unmuteByUser() {
-  if (!muteFallback && !video.muted) return;
+  if (!video.muted) { syncUnmuteHint(); return; }
   muteFallback = false;
   video.muted = false;
-  hideUnmuteHint();
+  syncUnmuteHint();
   if (video.paused) video.play().catch(() => {});
 }
 
-function showUnmuteHint() {
-  document.getElementById('unmuteHint').style.display = 'block';
+// 实时监测静音状态: 无论何种原因(浏览器策略/静音回退)被静音, 都提示按键开启
+function syncUnmuteHint() {
+  const hint = document.getElementById('unmuteHint');
+  hint.style.display = (video.muted && currentSong) ? 'block' : 'none';
 }
-function hideUnmuteHint() {
-  document.getElementById('unmuteHint').style.display = 'none';
-}
+video.addEventListener('volumechange', syncUnmuteHint);   // muted 变化立即同步
+setInterval(syncUnmuteHint, 500);                         // 兜底轮询(浏览器强制静音等)
 
 document.addEventListener('keydown', (e) => {
   const isEnter = e.key === 'Enter' || e.code === 'Enter' || e.key === 'OK' || e.key === 'NumpadEnter';
   if (isEnter || e.code === 'Space') {
     e.preventDefault();
-    if (muteFallback) unmuteByUser();
+    if (video.muted) unmuteByUser();   // 只要处于静音, 回车/OK/空格即开启
   }
 });
 
@@ -182,7 +194,8 @@ function onMessage(msg) {
         currentSong = null;
         document.getElementById('songTitle').classList.add('hidden');
         document.getElementById('coverLayer').classList.add('hidden');
-        hideUnmuteHint();
+        video.muted = false;   // 清空时复位静音, 避免空闲屏误提示
+        syncUnmuteHint();
         video.pause();
         video.removeAttribute('src');
         video.load();
