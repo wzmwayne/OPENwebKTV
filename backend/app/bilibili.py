@@ -5,6 +5,8 @@ OwK Bilibili API Client
 
 import json
 import os
+import time
+import hashlib
 import logging
 import subprocess
 import re
@@ -15,6 +17,16 @@ import httpx
 log = logging.getLogger("owk.bilibili")
 
 COOKIE_PATH = "bilibili_cookie.json"
+
+# B站 WBI 签名 mixin key 置换表
+_MIXIN_TAB = [46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
+              27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13,
+              37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
+              22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52]
+
+
+def _wbi_mixin_key(orig: str) -> str:
+    return ''.join(orig[i] for i in _MIXIN_TAB)[:32]
 
 
 # ── 下载进度追踪 ──────────────────────────────────────
@@ -143,6 +155,7 @@ class BilibiliClient:
             "Referer": "https://www.bilibili.com/",
         }
         self._client: Optional[httpx.AsyncClient] = None
+        self._wbi_key: Optional[tuple] = None   # (mixin_key, fetched_at)
         if cookie_path and os.path.exists(cookie_path):
             self._load_cookies(cookie_path)
 
@@ -166,6 +179,22 @@ class BilibiliClient:
                 headers=self._headers, timeout=30, follow_redirects=True
             )
         return self._client
+
+    async def _wbi_sign(self, params: dict) -> dict:
+        """WBI签名: 返回带 wts + w_rid 的 params。
+
+        B站 /x/player/wbi/v2 等接口必须签名, 未签名时 AI 字幕内容会不稳定/错乱。
+        """
+        if not self._wbi_key or time.time() - self._wbi_key[1] > 3600:
+            nav = await self._get("/x/web-interface/nav")
+            wbi = nav["wbi_img"]
+            img = wbi["img_url"].rsplit("/", 1)[-1].split(".")[0]
+            sub = wbi["sub_url"].rsplit("/", 1)[-1].split(".")[0]
+            self._wbi_key = (_wbi_mixin_key(img + sub), time.time())
+        params["wts"] = int(time.time())
+        query = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+        params["w_rid"] = hashlib.md5((query + self._wbi_key[0]).encode()).hexdigest()
+        return params
 
     async def close(self):
         if self._client:
@@ -251,7 +280,12 @@ class BilibiliClient:
         if cid is None:
             info = await self.video_info(bvid)
             cid = info.cid
-        data = await self._get("/x/player/v2", {"bvid": bvid, "cid": cid})
+        try:
+            params = await self._wbi_sign({"bvid": bvid, "cid": cid})
+            data = await self._get("/x/player/wbi/v2", params)
+        except Exception:
+            log.warning("WBI字幕接口失败, 回退未签名 /x/player/v2 (AI字幕可能不稳定)")
+            data = await self._get("/x/player/v2", {"bvid": bvid, "cid": cid})
         subtitles = data.get("subtitle", {}).get("subtitles", [])
         tracks = []
         for s in subtitles:
