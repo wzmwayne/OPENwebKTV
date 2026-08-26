@@ -64,9 +64,9 @@ video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:contain}
 </head>
 <body>
 <video id="v" playsinline controls></video>
-<div id="mode">指令控制版 — 快捷键: Space=播放/暂停 1=SONG1 2=SONG2 M=静音 R=重载</div>
+<div id="mode">指令控制版 — 快捷键: 回车/OK/空格=播放暂停或解除静音 1=SONG1 2=SONG2 M=静音 R=重载</div>
 <div id="warn">⚠ 自动播放被浏览器阻止 — 请点击底部【▶ 播放】</div>
-<div id="hint">⬆ 按上方向键解除静音</div>
+<div id="hint">按 回车 / OK / 空格 解除静音</div>
 <div id="status"></div>
 <div id="btns">
   <button class="hot" onclick="cmdPlay()">▶ 播放</button>
@@ -165,12 +165,17 @@ function reloadCur() { if (cur > 0) loadVideo(cur); }
 
 // 键盘指令
 document.addEventListener('keydown', (e) => {
-  if (e.code === 'Space') { e.preventDefault(); (v.paused ? cmdPlay() : cmdPause()); }
+  const isEnter = e.key === 'Enter' || e.code === 'Enter' || e.key === 'OK' || e.key === 'NumpadEnter';
+  if (isEnter || e.code === 'Space') {
+    e.preventDefault();
+    if (muteFallback) { unmuteByUser(); return; }   // 回退态: 先解除静音
+    (v.paused ? cmdPlay() : cmdPause());            // 正常态: 播放/暂停
+  }
   else if (e.key === '1') loadVideo(1);
   else if (e.key === '2') loadVideo(2);
   else if (e.key.toLowerCase() === 'm') toggleMute();
   else if (e.key.toLowerCase() === 'r') reloadCur();
-  else if (e.key === 'ArrowUp') unmuteByUser();
+  else if (e.key === 'ArrowUp') unmuteByUser();      // 保留方向键兼容
 });
 
 // WS: 服务器指令(连接即 play 1; ended(id=1) 后 play 2)
@@ -200,7 +205,7 @@ setInterval(() => {
     `<span class="${bad ? 'bad' : 'ok'}">当前: SONG ${cur || '-'} ${playRejected ? '(play被拒!)' : ''}</span>
 muted: ${v.muted} | volume: ${v.volume.toFixed(2)} | paused: ${v.paused}
 readyState: ${v.readyState} | 进度: ${v.currentTime.toFixed(1)}s / ${(v.duration||0).toFixed(1)}s
-播放尝试: ${playRetries}/${MAX_PLAY_RETRIES} | 静音回退: ${muteFallback ? '是(按↑解除)' : '否'}
+播放尝试: ${playRetries}/${MAX_PLAY_RETRIES} | 静音回退: ${muteFallback ? '是(按回车/OK/空格)' : '否'}
 自动切歌: ${autoSwitch ? '开' : '关'} | WS: ${ws.readyState === 1 ? '已连' : '断开'}`;
 }, 200);
 </script>
