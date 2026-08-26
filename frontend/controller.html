@@ -27,6 +27,30 @@ body{
 #loginLock button{background:#7c5cfc;color:#fff;border:none;border-radius:10px;
   padding:12px 34px;font-size:15px;cursor:pointer}
 #loginLock button:hover{background:#6a4aee}
+#detailView{position:fixed;top:0;left:0;right:0;bottom:0;max-width:480px;margin:0 auto;z-index:50;
+  background:#0a0a0f;display:flex;flex-direction:column}
+.dv-header{display:flex;align-items:center;gap:10px;padding:12px 16px;background:#14141f;
+  border-bottom:1px solid #2a2a3a;flex-shrink:0}
+.dv-header button{background:none;border:none;color:#7c5cfc;font-size:15px;cursor:pointer;padding:4px 8px}
+.dv-title{flex:1;font-size:15px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dv-body{flex:1;overflow-y:auto}
+#dvFrame{width:100%;aspect-ratio:16/9;border:none;background:#000;display:block}
+.dv-meta{display:flex;justify-content:space-between;padding:10px 16px;font-size:12px;color:rgba(255,255,255,.5)}
+.dv-tracks{padding:8px 16px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.dv-tracks .t-label{font-size:12px;color:rgba(255,255,255,.4);margin-right:4px}
+.dv-tracks button{background:#2a2a3a;color:#ccc;border:none;border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer}
+.dv-tracks button.on{background:#7c5cfc;color:#fff}
+.dv-section{padding:12px 16px 6px;font-size:13px;color:#7c5cfc;font-weight:bold}
+.dv-lyrics{padding:0 16px 20px;font-size:13px;color:rgba(255,255,255,.75);line-height:1.9}
+.dv-lyrics .dv-line .t{color:rgba(255,255,255,.35);margin-right:8px;font-size:11px}
+.dv-footer{padding:12px 16px;border-top:1px solid #2a2a3a;background:#14141f;flex-shrink:0}
+#dvDownloadBtn{width:100%;padding:12px;border:none;border-radius:10px;background:#7c5cfc;
+  color:#fff;font-size:15px;cursor:pointer}
+#dvDownloadBtn:disabled{opacity:.5}
+.dv-progress{margin-top:10px;display:flex;align-items:center;gap:10px}
+.dv-progress .bar{flex:1;height:6px;background:#2a2a3a;border-radius:4px;overflow:hidden}
+.dv-progress .bar i{display:block;height:100%;background:#7c5cfc;width:0%;transition:width .5s}
+.dv-progress span{font-size:12px;color:rgba(255,255,255,.5);min-width:36px;text-align:right}
 
 .search-bar{padding:10px 16px}
 .search-bar input{width:100%;padding:10px 14px;border-radius:8px;border:1px solid #2a2a3a;
@@ -123,6 +147,30 @@ body{
   <button onclick="refreshLoginQr()">刷新二维码</button>
 </div>
 
+<div id="detailView" class="hidden">
+  <div class="dv-header">
+    <button onclick="closeDetail()">← 返回</button>
+    <div class="dv-title" id="dvTitle"></div>
+  </div>
+  <div class="dv-body">
+    <iframe id="dvFrame" allowfullscreen scrolling="no"></iframe>
+    <div class="dv-meta">
+      <span id="dvUploader"></span>
+      <span id="dvDuration"></span>
+    </div>
+    <div id="dvTracks" class="dv-tracks hidden"></div>
+    <div class="dv-section">歌词</div>
+    <div id="dvLyrics" class="dv-lyrics"></div>
+  </div>
+  <div class="dv-footer">
+    <button id="dvDownloadBtn" onclick="detailDownload()">⬇ 下载</button>
+    <div id="dvProgress" class="dv-progress hidden">
+      <div class="bar"><i id="dvBar"></i></div>
+      <span id="dvPct">0%</span>
+    </div>
+  </div>
+</div>
+
 <!-- ════════════ Tab: 下载 ════════════ -->
 <div class="tab-content active" id="tabDownload">
   <div class="search-bar">
@@ -201,6 +249,7 @@ function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').re
 
 const ws = new WsClient('/ws/controller', onMessage);
 let state = {current:null, queue:[], status:'idle', position:0};
+let dlItems = [];   // 当前搜索结果(预览详情页用)
 let searchTimers = {dl:null, local:null};
 let localSongsCache = [];
 
@@ -288,6 +337,7 @@ function onMessage(msg) {
       break;
     case 'download_progress':
       renderDlProgress(msg.downloads);
+      if (detailBvid && msg.downloads[detailBvid]) updateDetailProgress(msg.downloads[detailBvid]);
       break;
     case 'volume':
       if (msg.volume !== undefined) {
@@ -347,21 +397,23 @@ async function doDlSearch(keyword) {
   const el = document.getElementById('dlResults');
   el.innerHTML = '<div style="padding:16px;color:rgba(255,255,255,.2);text-align:center">搜索中...</div>';
   try {
-    const r = await fetch(`/api/search?keyword=${encodeURIComponent(keyword)}&page=1`);
+    // 自动拼接搜索词: xxx 歌曲
+    const r = await fetch(`/api/search?keyword=${encodeURIComponent(keyword.trim() + ' 歌曲')}&page=1`);
     const d = await r.json();
-    renderDlResults(d.items || []);
+    renderDlResults(sortPinned(d.items || []));
   } catch(e) {
     el.innerHTML = '<div style="padding:16px;color:#f44;text-align:center">搜索失败</div>';
   }
 }
 
 function renderDlResults(items) {
+  dlItems = items;
   const el = document.getElementById('dlResults');
   if (items.length === 0) {
     el.innerHTML = '<div style="padding:16px;color:rgba(255,255,255,.2);text-align:center">未找到结果</div>';
     return;
   }
-  el.innerHTML = items.map(item => {
+  el.innerHTML = items.map((item, i) => {
     const m = Math.floor(item.duration/60), s = item.duration%60;
     return `<div class="result-item">
       <img src="${esc(item.cover||'')}" alt="" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 48%22><rect fill=%22%232a2a3a%22 width=%2264%22 height=%2248%22/></svg>'">
@@ -371,22 +423,127 @@ function renderDlResults(items) {
         <div class="rmeta">${m}:${s.toString().padStart(2,'0')}</div>
       </div>
       <div class="result-actions">
-        <button class="btn-icon btn-primary" onclick="downloadSong('${esc(item.bvid)}')">⬇</button>
+        <button class="btn-icon btn-primary" onclick="openDetail(${i})">⬇</button>
       </div>
     </div>`;
   }).join('');
 }
 
-async function downloadSong(bvid) {
+// 顶置: 标题含"音质"/"MV"/成对书名号(《》或「」)的项置顶, 各自保持原有次序
+function sortPinned(items) {
+  const pin = [], rest = [];
+  for (const it of items) {
+    const t = it.title || '';
+    const hit = t.includes('音质') || t.toUpperCase().includes('MV')
+      || (t.includes('《') && t.includes('》')) || (t.includes('「') && t.includes('」'));
+    (hit ? pin : rest).push(it);
+  }
+  return pin.concat(rest);
+}
+
+// ── 预览详情页(点搜索结果 ⬇ 进入) ──
+let detailBvid = null;
+let detailTracks = [];
+let detailTrackIdx = 0;
+
+function openDetail(i) {
+  const it = dlItems[i];
+  if (!it) return;
+  detailBvid = it.bvid;
+  detailTrackIdx = 0;
+  document.getElementById('dvTitle').textContent = it.title;
+  document.getElementById('dvFrame').src =
+    'https://player.bilibili.com/player.html?bvid=' + it.bvid + '&autoplay=0&high_quality=1&danmaku=0';
+  document.getElementById('dvUploader').textContent = it.author || '';
+  document.getElementById('dvDuration').textContent = formatTime(it.duration);
+  document.getElementById('dvDownloadBtn').disabled = false;
+  document.getElementById('dvDownloadBtn').textContent = '⬇ 下载';
+  resetDetailProgress();
+  document.getElementById('detailView').classList.remove('hidden');
+  loadDetailTracks(it.bvid);
+}
+
+function closeDetail() {
+  document.getElementById('detailView').classList.add('hidden');
+  const f = document.getElementById('dvFrame');
+  f.removeAttribute('src');   // 停止 iframe 播放
+  detailBvid = null;
+}
+
+function resetDetailProgress() {
+  document.getElementById('dvProgress').classList.add('hidden');
+  document.getElementById('dvBar').style.width = '0%';
+  document.getElementById('dvPct').textContent = '0%';
+}
+
+// 多字幕轨选择(仅 >1 轨时显示)
+async function loadDetailTracks(bvid) {
+  detailTracks = [];
   try {
-    const r = await fetch('/api/download', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({bvid})
-    });
-    const d = await r.json();
-    if (d.status === 'already_downloaded') showToast('已下载过');
-    else if (d.status === 'downloading') showToast('开始下载');
-  } catch(e) { showToast('下载失败'); }
+    const d = await (await fetch('/api/lyrics/tracks/' + bvid)).json();
+    detailTracks = d.tracks || [];
+  } catch(e) {}
+  const box = document.getElementById('dvTracks');
+  if (detailTracks.length > 1) {
+    box.classList.remove('hidden');
+    box.innerHTML = '<span class="t-label">字幕轨:</span>' + detailTracks.map((t, idx) =>
+      `<button class="${idx === 0 ? 'on' : ''}" onclick="selectTrack(${idx})">${esc(t.lan_doc || t.lan || ('轨' + idx))}</button>`
+    ).join('');
+  } else {
+    box.classList.add('hidden');
+    box.innerHTML = '';
+  }
+  loadDetailLyrics(bvid, detailTrackIdx);
+}
+
+function selectTrack(idx) {
+  detailTrackIdx = idx;
+  const box = document.getElementById('dvTracks');
+  box.querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', i === idx));
+  loadDetailLyrics(detailBvid, idx);
+}
+
+async function loadDetailLyrics(bvid, track) {
+  const el = document.getElementById('dvLyrics');
+  el.textContent = '加载中...';
+  try {
+    const q = track >= 0 ? ('?track=' + track) : '';
+    const d = await (await fetch('/api/lyrics/' + bvid + q)).json();
+    const ls = d.lyrics || [];
+    if (!ls.length) { el.textContent = '无歌词'; return; }
+    el.innerHTML = ls.map(l =>
+      `<div class="dv-line"><span class="t">${formatTime(l.start)}</span>${esc(l.text)}</div>`).join('');
+  } catch(e) { el.textContent = '歌词加载失败'; }
+}
+
+// 下载(同时保存所选字幕轨歌词); 进度由 WS download_progress 驱动
+function detailDownload() {
+  if (!detailBvid) return;
+  const btn = document.getElementById('dvDownloadBtn');
+  btn.disabled = true;
+  fetch('/api/download', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({bvid: detailBvid, track: detailTrackIdx})})
+    .then(r => r.json()).then(d => {
+      if (d.status === 'already_downloaded') { showToast('已下载过'); finishDetail(); }
+      else if (d.status === 'downloading') { showToast('开始下载'); showDetailProgress(1, '1%'); }
+      else { btn.disabled = false; showToast('下载失败'); }
+    }).catch(() => { btn.disabled = false; showToast('下载失败'); });
+}
+
+function showDetailProgress(pct, label) {
+  document.getElementById('dvProgress').classList.remove('hidden');
+  document.getElementById('dvBar').style.width = Math.min(100, pct) + '%';
+  document.getElementById('dvPct').textContent = label || Math.round(pct) + '%';
+}
+function finishDetail() {
+  showDetailProgress(100, '已完成');
+  document.getElementById('dvDownloadBtn').disabled = false;
+  document.getElementById('dvDownloadBtn').textContent = '✓ 已下载';
+}
+function updateDetailProgress(info) {
+  const pct = Math.min(100, info.percent || 0);
+  if (pct >= 100) finishDetail();
+  else showDetailProgress(pct);
 }
 
 function renderDlProgress(downloads) {

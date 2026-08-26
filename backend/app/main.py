@@ -24,9 +24,25 @@ app.add_middleware(
 )
 
 
+def _migrate_song_lyrics():
+    """轻量迁移: 旧库 songs 表补 lyrics 列(无迁移框架, 手动 ALTER)"""
+    from .database import SessionLocal
+    from sqlalchemy import text
+    db = SessionLocal()
+    try:
+        cols = [r[1] for r in db.execute(text("PRAGMA table_info(songs)")).fetchall()]
+        if "lyrics" not in cols:
+            db.execute(text("ALTER TABLE songs ADD COLUMN lyrics TEXT"))
+            db.commit()
+            log.info("数据库迁移: songs 表新增 lyrics 列")
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 async def startup():
     init_db()
+    _migrate_song_lyrics()
     _reset_stuck_playing()
     _dedup_queue()
     player_engine.start_poll()

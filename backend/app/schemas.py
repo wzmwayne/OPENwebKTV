@@ -50,6 +50,7 @@ class ImportRequest(BaseModel):
 
 class QueueAddRequest(BaseModel):
     bvid: str
+    track: int = 0   # 字幕轨序号(下载时同时保存该轨歌词; -1 表示不保存)
 
 
 class ReorderRequest(BaseModel):

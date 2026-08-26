@@ -1,5 +1,6 @@
 import asyncio
 import io
+import json
 import os
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -25,19 +26,56 @@ log = logging.getLogger("owk.api")
 LYRICS_CACHE: dict[str, list] = {}
 
 
+def _lines_to_json(lines) -> str:
+    return json.dumps(
+        [{"start": l.start, "end": l.end, "text": l.text} for l in lines],
+        ensure_ascii=False,
+    )
+
+
+@router.get("/lyrics/tracks/{bvid}")
+async def lyric_tracks(bvid: str):
+    """列出视频的字幕轨(供控制端选择); 仅返回有下载地址的轨"""
+    try:
+        async with BilibiliClient(cookie_path=settings.BILIBILI_COOKIE) as client:
+            tracks = await client.subtitles(bvid)
+    except Exception as e:
+        log.warning(f"获取字幕轨失败 {bvid}: {e}")
+        tracks = []
+    return {"tracks": [
+        {"index": i, "lan": t.lan, "lan_doc": t.lan_doc}
+        for i, t in enumerate(tracks) if t.url
+    ]}
+
+
 @router.get("/lyrics/{bvid}")
-async def get_song_lyrics(bvid: str):
-    """获取B站字幕歌词(带时间轴), 内存缓存"""
-    if bvid in LYRICS_CACHE:
-        return {"lyrics": LYRICS_CACHE[bvid]}
+async def get_song_lyrics(bvid: str, track: int = -1, db: Session = Depends(get_db)):
+    """获取歌词(带时间轴)。
+
+    - track < 0(默认): 优先返回下载时存储的歌词(Song.lyrics), 否则取第一条有地址的字幕轨
+    - track >= 0: 取指定字幕轨内容(控制端预览切换用)
+    """
+    if track < 0:
+        song = db.query(Song).filter(Song.bvid == bvid).first()
+        if song and song.lyrics:
+            try:
+                return {"lyrics": json.loads(song.lyrics)}
+            except Exception:
+                pass
+    key = f"{bvid}:{track}"
+    if key in LYRICS_CACHE:
+        return {"lyrics": LYRICS_CACHE[key]}
     lines = []
     try:
         async with BilibiliClient(cookie_path=settings.BILIBILI_COOKIE) as client:
-            lines = await client.get_lyrics(bvid)
+            tracks = await client.subtitles(bvid)
+            if tracks:
+                idx = track if 0 <= track < len(tracks) else 0
+                lines = await client.subtitle_content(tracks[idx].url)
     except Exception as e:
         log.warning(f"获取歌词失败 {bvid}: {e}")
     data = [{"start": l.start, "end": l.end, "text": l.text} for l in lines]
-    LYRICS_CACHE[bvid] = data
+    LYRICS_CACHE[key] = data
     return {"lyrics": data}
 
 
@@ -79,7 +117,7 @@ def _has_video_stream(path: str) -> bool:
         return True  # ffprobe 不可用/异常时按有视频处理, 保持原行为
 
 
-async def _run_download(song_id: int, bvid: str):
+async def _run_download(song_id: int, bvid: str, track: int = 0):
     from ..database import SessionLocal
     from ..bilibili import clear_dl_progress
     db = SessionLocal()
@@ -93,19 +131,32 @@ async def _run_download(song_id: int, bvid: str):
     finally:
         db.close()
 
+    lyrics_json = ""
     try:
         async with BilibiliClient(cookie_path=settings.BILIBILI_COOKIE) as client:
             path = await client.download_video(bvid, settings.MEDIA_DIR)
             size = os.path.getsize(path)
+            # 同时下载歌词(所选字幕轨; 失败不阻塞视频下载)
+            if track >= 0:
+                try:
+                    tracks = await client.subtitles(bvid)
+                    if tracks:
+                        idx = track if 0 <= track < len(tracks) else 0
+                        lines = await client.subtitle_content(tracks[idx].url)
+                        lyrics_json = _lines_to_json(lines)
+                except Exception as e:
+                    log.warning(f"歌词下载失败 {bvid}: {e}")
         db = SessionLocal()
         s = db.query(Song).filter(Song.id == song_id).first()
         if s:
             s.file_path = path
             s.file_size = size
+            s.lyrics = lyrics_json
             # 用 ffprobe 判定是否含视频轨；纯音频文件标记为 audio_only
             s.download_status = "ready" if _has_video_stream(path) else "audio_only"
             db.commit()
-            log.info(f"下载完成: {bvid} ({'视频' if s.download_status == 'ready' else '仅音频'})")
+            log.info(f"下载完成: {bvid} ({'视频' if s.download_status == 'ready' else '仅音频'}"
+                     f"{' 含歌词' if lyrics_json else ' 无歌词'})")
         db.close()
         await player_engine.broadcast_state()
     except Exception as e:
@@ -163,7 +214,7 @@ async def download_song(body: QueueAddRequest, db: Session = Depends(get_db)):
     song = await _ensure_song(body.bvid, db)
     if song.download_status == "ready":
         return {"status": "already_downloaded", "song_id": song.id}
-    asyncio.create_task(_run_download(song.id, body.bvid))
+    asyncio.create_task(_run_download(song.id, body.bvid, body.track))
     return {"status": "downloading", "song_id": song.id}
 
 
@@ -184,7 +235,7 @@ async def add_queue(body: QueueAddRequest, db: Session = Depends(get_db)):
         raise HTTPException(400, "队列已满(上限50首)")
     if result == "exists":
         raise HTTPException(409, "歌曲已在队列中")
-    asyncio.create_task(_run_download(song.id, body.bvid))
+    asyncio.create_task(_run_download(song.id, body.bvid, body.track))
     return {"item_id": item_id}
 
 
@@ -304,7 +355,7 @@ async def play_playlist(pl_id: int, db: Session = Depends(get_db)):
         item_id, result = await player_engine.add_to_queue(song.id, db)
         if result == "full":
             break
-        asyncio.create_task(_run_download(song.id, song.bvid))
+        asyncio.create_task(_run_download(song.id, song.bvid, 0))
         added += 1
     return {"added": added}
 
