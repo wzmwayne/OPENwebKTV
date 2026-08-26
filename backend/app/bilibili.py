@@ -95,6 +95,36 @@ class PlayInfo:
     duration: int = 0
 
 
+# ── 选流策略 ─────────────────────────────────────────
+
+AVC_CODEC_ID = 7  # B站 codecid: 7=H.264/AVC, 12=HEVC, 13=AV1
+
+
+def pick_best_video(streams: list[dict]) -> dict | None:
+    """选择最合适的视频流。
+
+    优先 H.264 (codecid=7) —— 浏览器/电视 WebView 兼容性最好，
+    这是"只有音乐没画面"问题的关键修复: 旧逻辑只按分辨率选流，
+    可能选中 HEVC/AV1，Linux Chrome 等环境无 HEVC 解码 → 黑屏。
+    若视频没有 H.264 流，退回分辨率最高者，由合并阶段强制转码。
+    """
+    if not streams:
+        return None
+    best = max(streams, key=lambda s: (s.get("height", 0), s.get("bandwidth", 0)))
+    if best.get("codecid") == AVC_CODEC_ID:
+        return best
+    avc = [s for s in streams if s.get("codecid") == AVC_CODEC_ID]
+    if avc:
+        target = best.get("height", 0)
+        return min(avc, key=lambda s: abs(s.get("height", 0) - target))
+    return best
+
+
+def video_needs_transcode(stream: dict) -> bool:
+    """视频流不是 H.264 时，合并阶段必须转码，不能用 -c copy 保留原编码"""
+    return bool(stream) and stream.get("codecid") not in (None, AVC_CODEC_ID)
+
+
 # ── B站客户端 ─────────────────────────────────────────
 
 class BilibiliClient:
@@ -334,7 +364,7 @@ class BilibiliClient:
         output_path = os.path.join(output_dir, f"{base}.mp4")
 
         best_audio = max(pi.audio_streams, key=lambda x: x.bandwidth) if pi.audio_streams else None
-        best_video = max(pi.video_streams, key=lambda x: x["height"]) if pi.video_streams else None
+        best_video = pick_best_video(pi.video_streams)
 
         if not best_audio and not best_video:
             raise Exception("无可下载的流")
@@ -359,7 +389,7 @@ class BilibiliClient:
             log.info(f"  音频下载完成 ({os.path.getsize(audio_raw)//1024}KB)")
 
         if best_video:
-            log.info(f"  视频: {best_video['width']}x{best_video['height']}")
+            log.info(f"  视频: {best_video['width']}x{best_video['height']} codecid={best_video.get('codecid')}")
             await self._download_file(c, best_video["url"], video_raw, bvid, _pct())
             done_steps += 1
             update_dl_progress(bvid, _pct(), "downloading", info.title)
@@ -385,32 +415,35 @@ class BilibiliClient:
         # ── 合并 ────────────────────────────────────
         if merge and best_audio and best_video and os.path.exists(audio_mp4) and os.path.exists(video_mp4):
             log.info("  FFmpeg合并(音视频)...")
-            # 先尝试快速复制(copy)，不支持则转码
-            for attempt, cmd in enumerate([
-                # 尝试1: 直接复制(仅重封装)
-                ["ffmpeg", "-y",
-                 "-i", video_mp4,
-                 "-i", audio_mp4,
-                 "-c", "copy",
-                 "-movflags", "+faststart",
-                 output_path],
-                # 尝试2: 视频转H.264 + 音频复制
-                ["ffmpeg", "-y",
-                 "-i", video_mp4,
-                 "-i", audio_mp4,
-                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                 "-c:a", "copy",
-                 "-movflags", "+faststart",
-                 output_path],
-                # 尝试3: 都转码
-                ["ffmpeg", "-y",
-                 "-i", video_mp4,
-                 "-i", audio_mp4,
-                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                 "-c:a", "aac", "-b:a", "192k",
-                 "-movflags", "+faststart",
-                 output_path],
-            ]):
+            transcode = video_needs_transcode(best_video)
+            attempts = []
+            if not transcode:
+                # 尝试1: 直接复制(仅重封装) —— 仅当视频已是 H.264
+                attempts.append(["ffmpeg", "-y",
+                                 "-i", video_mp4,
+                                 "-i", audio_mp4,
+                                 "-c", "copy",
+                                 "-movflags", "+faststart",
+                                 output_path])
+            # 尝试2: 视频转H.264 + 音频复制
+            attempts.append(["ffmpeg", "-y",
+                             "-i", video_mp4,
+                             "-i", audio_mp4,
+                             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                             "-c:a", "copy",
+                             "-movflags", "+faststart",
+                             output_path])
+            # 尝试3: 都转码
+            attempts.append(["ffmpeg", "-y",
+                             "-i", video_mp4,
+                             "-i", audio_mp4,
+                             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                             "-c:a", "aac", "-b:a", "192k",
+                             "-movflags", "+faststart",
+                             output_path])
+            if transcode:
+                log.info(f"  视频编码 codecid={best_video.get('codecid')} 非 H.264，跳过直封装，强制转码 H.264")
+            for attempt, cmd in enumerate(attempts):
                 try:
                     result = subprocess.run(cmd, check=True, capture_output=True, text=True)
                     log.info(f"  合并完成 (尝试{attempt+1})")

@@ -26,11 +26,27 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup():
     init_db()
+    _reset_stuck_playing()
     _dedup_queue()
     player_engine.start_poll()
     log.info("数据库初始化完成")
     log.info(f"媒体目录: {settings.MEDIA_DIR}")
     log.info(f"前端目录: {FRONTEND_DIR}")
+
+
+def _reset_stuck_playing():
+    """服务重启后, 把残留 status=playing 的队列项复位为 waiting。
+    否则 _load_next 只查询 waiting, 这些歌永远不会再被播放。"""
+    from .database import SessionLocal
+    from .models import QueueItem
+    db = SessionLocal()
+    try:
+        n = db.query(QueueItem).filter(QueueItem.status == "playing").update({"status": "waiting"})
+        db.commit()
+        if n:
+            log.info(f"启动复位: {n} 个卡在 playing 的队列项 → waiting")
+    finally:
+        db.close()
 
 
 def _dedup_queue():

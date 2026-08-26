@@ -30,6 +30,11 @@ video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:contain}
 #idleScreen .logo{font-size:clamp(48px,8vw,96px);color:#7c5cfc;margin-bottom:16px}
 #idleScreen .sub{font-size:clamp(12px,1.5vw,18px);margin-top:8px;color:rgba(255,255,255,.15)}
 #idleScreen.hidden{display:none}
+#coverLayer{position:fixed;top:0;left:0;width:100%;height:100%;z-index:2;
+  display:flex;align-items:center;justify-content:center;background:#0a0a0f}
+#coverLayer img{width:min(60vw,60vh);border-radius:12px;box-shadow:0 0 40px rgba(0,0,0,.6)}
+#coverLayer .cover-badge{position:absolute;bottom:14%;font-size:13px;color:rgba(255,255,255,.4);
+  background:rgba(0,0,0,.5);padding:4px 12px;border-radius:10px}
 </style>
 </head>
 <body>
@@ -41,6 +46,7 @@ video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:contain}
 </div>
 
 <video id="playerVideo" playsinline></video>
+<div id="coverLayer" class="hidden"><img id="coverImg" alt=""><div class="cover-badge">音频模式</div></div>
 
 <div id="qrWrap"><img id="qrImg" src="/api/qr/controller" alt="QR"><div class="ql">扫码控制</div></div>
 <div class="status-badge" id="statusBadge">未连接</div>
@@ -54,6 +60,7 @@ let currentSong = null;
 let lastSentPos = 0;
 let songEndSent = false;
 let retryCount = 0;
+let retryTimer = null;
 const MAX_RETRIES = 10;
 
 ws.onConnect = () => {
@@ -62,20 +69,31 @@ ws.onConnect = () => {
 };
 
 function loadVideo(song) {
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
   video.pause();
   video.removeAttribute('src');
   video.load();
   currentSong = song;
+  lastSentPos = 0;
   document.getElementById('songTitle').textContent = song.title || '';
   document.getElementById('songTitle').classList.remove('hidden');
   video.muted = true;
   video.src = `/api/media/${song.id}`;
   video.load();
+  try { video.currentTime = 0; } catch(e) {}
   video.play().then(() => {
     setTimeout(() => { video.muted = false; }, 100);
   }).catch(() => {});
   songEndSent = false;
   retryCount = 0;
+  // 纯音频(无视频轨)时显示封面兜底, 避免黑屏只有声音
+  const cover = document.getElementById('coverLayer');
+  if (song.download_status === 'audio_only' && song.cover) {
+    document.getElementById('coverImg').src = song.cover;
+    cover.classList.remove('hidden');
+  } else {
+    cover.classList.add('hidden');
+  }
 }
 
 function onMessage(msg) {
@@ -103,6 +121,7 @@ function onMessage(msg) {
       } else {
         currentSong = null;
         document.getElementById('songTitle').classList.add('hidden');
+        document.getElementById('coverLayer').classList.add('hidden');
         video.pause();
         video.removeAttribute('src');
         video.load();
@@ -125,13 +144,17 @@ video.ontimeupdate = () => {
 
 video.onerror = () => {
   if (!currentSong) return;
+  const sid = currentSong.id;
   retryCount++;
   if (retryCount > MAX_RETRIES) return;
-  fetch(`/api/media/${currentSong.id}`).then(r=>{
-    if (r.status === 404 && currentSong.download_status !== 'ready') {
-      setTimeout(() => {
-        if (currentSong) {
-          video.src = `/api/media/${currentSong.id}`;
+  fetch(`/api/media/${sid}`).then(r=>{
+    // 仅当仍是同一首歌且文件尚未就绪时才重试; 已就绪/纯音频不重试
+    if (r.status === 404 && currentSong && currentSong.id === sid
+        && !['ready','audio_only'].includes(currentSong.download_status)) {
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        if (currentSong && currentSong.id === sid) {
+          video.src = `/api/media/${sid}`;
           video.play().catch(() => {});
         }
       }, 2000);

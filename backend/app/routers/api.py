@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from ..database import get_db
 from ..models import Song, Playlist, PlaylistSong
 from ..schemas import (
@@ -25,8 +26,9 @@ log = logging.getLogger("owk.api")
 async def _ensure_song(bvid: str, db: Session) -> Song:
     song = db.query(Song).filter(Song.bvid == bvid).first()
     if not song:
-        async with BilibiliClient(cookie_path=settings.BILIBILI_COOKIE) as client:
-            info = await client.video_info(bvid)
+        try:
+            async with BilibiliClient(cookie_path=settings.BILIBILI_COOKIE) as client:
+                info = await client.video_info(bvid)
             song = Song(
                 bvid=bvid, title=info.title,
                 uploader=info.uploader, duration=info.duration,
@@ -35,7 +37,25 @@ async def _ensure_song(bvid: str, db: Session) -> Song:
             db.add(song)
             db.commit()
             db.refresh(song)
+        except IntegrityError:
+            # 并发首次入库撞唯一约束: 回滚后取已有记录
+            db.rollback()
+            song = db.query(Song).filter(Song.bvid == bvid).first()
     return song
+
+
+def _has_video_stream(path: str) -> bool:
+    """用 ffprobe 判断文件是否包含视频轨(纯音频时标记 audio_only, 前端显示封面兜底)"""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v",
+             "-show_entries", "stream=codec_type", "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=30,
+        )
+        return "video" in r.stdout
+    except Exception:
+        return True  # ffprobe 不可用/异常时按有视频处理, 保持原行为
 
 
 async def _run_download(song_id: int, bvid: str):
@@ -61,11 +81,12 @@ async def _run_download(song_id: int, bvid: str):
         if s:
             s.file_path = path
             s.file_size = size
-            s.download_status = "ready"
+            # 用 ffprobe 判定是否含视频轨；纯音频文件标记为 audio_only
+            s.download_status = "ready" if _has_video_stream(path) else "audio_only"
             db.commit()
+            log.info(f"下载完成: {bvid} ({'视频' if s.download_status == 'ready' else '仅音频'})")
         db.close()
         await player_engine.broadcast_state()
-        log.info(f"下载完成: {bvid}")
     except Exception as e:
         log.error(f"下载失败 {bvid}: {e}")
         db = SessionLocal()
@@ -286,9 +307,18 @@ async def stream_media(song_id: int):
     db = SessionLocal()
     song = db.query(Song).filter(Song.id == song_id).first()
     db.close()
-    if not song or not song.file_path or not os.path.exists(song.file_path):
+    # 仅就绪文件可流式播放; 下载中/失败一律 404, 避免读到半成品
+    if not song or song.download_status not in ("ready", "audio_only") \
+            or not song.file_path or not os.path.exists(song.file_path):
         raise HTTPException(404, "文件不存在")
-    return FileResponse(song.file_path, media_type="video/mp4")
+    ext = os.path.splitext(song.file_path)[1].lower()
+    media_type = {
+        "mp4": "video/mp4",
+        "m4a": "audio/mp4",
+        "aac": "audio/aac",
+        "m4s": "video/mp4",
+    }.get(ext, "video/mp4")
+    return FileResponse(song.file_path, media_type=media_type)
 
 
 # ── QR 码 ────────────────────────────────────────────

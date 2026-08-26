@@ -12,6 +12,9 @@ log = logging.getLogger("owk.ws")
 @router.websocket("/ws/player")
 async def ws_player(ws: WebSocket):
     await ws_manager.register_player(ws)
+    # 连接后立即推送当前状态, 新打开的播放器页能同步当前歌曲/播放状态
+    state = player_engine.get_state()
+    await ws.send_json({"type": "state", "state": state.model_dump()})
     try:
         while True:
             raw = await ws.receive_text()
