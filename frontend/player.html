@@ -363,6 +363,25 @@ let adminPhase = 'none';
 let adminCode = '';
 let adminTtl = 0;
 let adminTimer = null;
+let adminPrevPhase = 'none';   // 上次阶段(检测 active→none 授权结束)
+let adminReloadTimer = null;   // 授权结束自动刷新定时器
+
+function checkAdminEndReload(newPhase) {
+  if (adminReloadTimer) return;   // 已在刷新流程中
+  if (adminPrevPhase === 'active' && newPhase === 'none') {
+    // 授权结束: 显示刷新提示, 2.5s 后重载页面
+    const ov = document.getElementById('adminOverlay');
+    ov.classList.remove('hidden');
+    document.getElementById('aoTitle').textContent = '高级操作已结束';
+    document.getElementById('aoCode').className = 'ao-ok';
+    document.getElementById('aoCode').textContent = '⟳';
+    document.getElementById('aoSub').textContent = '页面即将自动刷新';
+    document.getElementById('aoCount').textContent = '';
+    if (adminTimer) { clearInterval(adminTimer); adminTimer = null; }
+    adminReloadTimer = setTimeout(() => location.reload(), 2500);
+  }
+  adminPrevPhase = newPhase;
+}
 
 function renderAdminOverlay() {
   const ov = document.getElementById('adminOverlay');
@@ -390,7 +409,7 @@ function renderAdminOverlay() {
         (adminPhase === 'code' ? '剩余 ' : '授权剩余 ') + Math.max(0, adminTtl) + 's';
     }, 1000);
   } else {
-    ov.classList.add('hidden');
+    if (!adminReloadTimer) ov.classList.add('hidden');   // 授权结束刷新提示期间保持显示
     if (adminTimer) { clearInterval(adminTimer); adminTimer = null; }
   }
 }
@@ -398,6 +417,7 @@ function renderAdminOverlay() {
 function onMessage(msg) {
   switch (msg.type) {
     case 'admin':
+      checkAdminEndReload(msg.phase || 'none');
       adminPhase = msg.phase || 'none';
       adminCode = msg.code || '';
       adminTtl = (adminPhase === 'code' ? (msg.code_ttl||0) : (msg.admin_remaining||0));
@@ -422,6 +442,7 @@ function onMessage(msg) {
     case 'state':
       if (msg.state?.admin) {
         // 中途重连/状态同步: 以 state.admin 校准阻塞覆盖层(动态码由 admin 消息单独下发)
+        checkAdminEndReload(msg.state.admin.phase || 'none');
         adminPhase = msg.state.admin.phase || 'none';
         adminTtl = (adminPhase === 'code' ? (msg.state.admin.code_ttl||0) : (msg.state.admin.admin_remaining||0));
         renderAdminOverlay();

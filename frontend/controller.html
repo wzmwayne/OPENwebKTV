@@ -390,10 +390,14 @@ function onMessage(msg) {
   switch (msg.type) {
     case 'state':
       state = msg.state;
-      if (msg.state?.admin) { adminState = msg.state.admin; updateAdminUI(); }
+      if (msg.state?.admin) {
+        checkAdminEndReload(msg.state.admin.phase);
+        adminState = msg.state.admin; updateAdminUI();
+      }
       updateUI();
       break;
     case 'admin':
+      checkAdminEndReload(msg.phase);
       adminState = msg;
       updateAdminUI();
       break;
@@ -418,6 +422,17 @@ function onMessage(msg) {
 // ════════════════ 高级操作(全局状态门控, 不做接口级鉴权) ═══════════════
 let adminState = {phase:'none', allowed:false, code_ttl:0, admin_remaining:0};
 let adminPollTimer = null;
+let adminLastPhase = 'none';     // 上次看到的授权阶段(检测 active→none 结束)
+let adminReloadTimer = null;     // 授权结束自动刷新定时器
+
+function checkAdminEndReload(newPhase) {
+  if (adminReloadTimer) return;                          // 已在刷新流程中
+  if (adminLastPhase === 'active' && newPhase === 'none') {
+    showToast('高级操作已结束，页面即将刷新');
+    adminReloadTimer = setTimeout(() => location.reload(), 2500);
+  }
+  adminLastPhase = newPhase;
+}
 
 function openAdminPanel() {
   document.getElementById('adminPanel').classList.remove('hidden');
@@ -434,6 +449,7 @@ function startAdminPoll() {
   adminPollTimer = setInterval(async () => {
     try {
       const d = await (await fetch('/api/admin/status')).json();
+      checkAdminEndReload(d.phase);
       adminState = d;
       updateAdminUI();
     } catch(e) {}
@@ -445,6 +461,7 @@ function stopAdminPoll() {
 async function syncAdminState() {
   try {
     const d = await (await fetch('/api/admin/status')).json();
+    checkAdminEndReload(d.phase);
     adminState = d;
     updateAdminUI();
   } catch(e) {}
@@ -474,6 +491,7 @@ async function adminSendVerify() {
   if (!r.ok) { showToast(d.detail || '密码错误'); return; }
   document.getElementById('apStaticPwd').value = '';
   adminState = {phase:'code', allowed:false, code_ttl:d.code_ttl||120, admin_remaining:0};
+  adminLastPhase = 'code';
   renderAdminPanel();
   showToast('验证请求已发送，请在播放端屏幕查看验证码');
 }
@@ -487,6 +505,7 @@ async function adminSendCode() {
   if (!r.ok) { showToast(d.detail || '验证码错误'); return; }
   document.getElementById('apCode').value = '';
   adminState = {phase:'active', allowed:true, code_ttl:0, admin_remaining:d.admin_remaining||60};
+  adminLastPhase = 'active';
   renderAdminPanel();
   updateAdminUI();
   showToast('高级操作授权成功');
@@ -494,10 +513,11 @@ async function adminSendCode() {
 
 async function adminCancel() {
   try { await fetch('/api/admin/cancel', {method:'POST'}); } catch(e) {}
+  checkAdminEndReload('none');   // 从 active 取消 → 同样触发自动刷新
   adminState = {phase:'none', allowed:false, code_ttl:0, admin_remaining:0};
   renderAdminPanel();
   updateAdminUI();
-  showToast('已结束');
+  if (!adminReloadTimer) showToast('已结束');
 }
 
 async function adminLogout() {
