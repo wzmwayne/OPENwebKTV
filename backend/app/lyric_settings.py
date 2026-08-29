@@ -1,6 +1,6 @@
 import json
 import os
-from ..config import settings
+from .config import settings
 
 DEFAULTS = {
     "normal_size": 20,
