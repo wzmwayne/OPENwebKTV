@@ -205,6 +205,11 @@ OPENwebKTV/
   偶数句焦点行1+行2滚入下一句, 奇数句焦点行2+行1滚入下一句
   (验证序列 -1A 2B → 1C -2B → -1C 2D → 1E -2D)。数据源 /api/lyrics/{bvid};
   WS lyrics_changed 消息(删歌词操作)触发当前歌即时重拉歌词
+- **player.html 歌词视觉效果设置**: 通过 CSS 变量驱动(--lyric-normal-size/focus-size/normal-color/focus-color);
+  支持大小对比(默认)/颜色对比(焦点行同大小+主题紫#7c5cfc+紫色光晕); 字幕动画开关(关闭时 transition:none);
+  阴影大小可调(0-30, 默认20, 动态构造 text-shadow); 高级操作期间在倒计时上方显示预览(复用 lyricRow1/lyricRow2,
+  填充示例歌词); 控制端设置页「视觉效果」区块(滑块+开关+按钮)仅授权期间可见, 实时通过 WS lyric_settings
+  消息推送播放端生效, 保存到 data/lyric_settings.json 持久化。
 - controller.html: **未登录时全屏锁定覆盖**(z-99, 唯一操作=「刷新二维码」→ /api/login/qr/refresh 广播
   播放端同步换码; 无退出/无关闭按钮), 登录成功自动解锁+toast; 锁定层实时显示扫码状态
 - controller.html: 4 Tab（下载/点歌/播放/设置）；队列支持 ▲▼/置顶/删除
@@ -416,4 +421,13 @@ cd backend && python3 login_server.py
   允许换行不截断; ②JS 新增 `adjustRow2()` 动态计算行1实际渲染高度(`getBoundingClientRect`),
   将行2 `top` 设为行1底部+10px 间距, 彻底避免长歌词换行后与行2重叠; ③`loadLyrics` 加载完成后
   立即调用 `applyLyricIndex(lyricAt(video.currentTime))` 即时显示; ④监听 `resize` 事件同步调整。
-  注意: 行2取消固定 `top:calc(...)` 偏移, 改为 JS 动态设置, 窗口大小改变时自动重算。
+   注意: 行2取消固定 `top:calc(...)` 偏移, 改为 JS 动态设置, 窗口大小改变时自动重算。
+
+- **2026-08-29 歌词视觉效果高级设置**: 新增「视觉效果」高级设置（仅授权期间可用），含：
+  非焦点字号(14-48px)、焦点字号(16-56px)、阴影大小(0-30)、字幕动画开关、焦点模式（大小对比/颜色对比）。
+  后端新增 `lyric_settings.py`（load/save，持久化 `data/lyric_settings.json`）+ `GET/POST /api/settings/lyric`；
+  WS 新增 `lyric_settings` 消息（controller 保存并转发给 players，player 连接时推送）。
+  播放端 CSS 改用变量驱动（`--lyric-normal-size/focus-size` 等），新增 `.lyric-color-mode`（主题紫焦点）、
+  `.lyric-no-anim`（关闭 transition+animation）；`applyLyricSettings()` 实时应用设置。
+  高级操作期间在 admin overlay 中复用 `lyricRow1/lyricRow2` 显示歌词预览（示例歌词），
+  切歌时若处于 admin 模式则跳过真实歌词加载、保持预览；授权结束自动隐藏。
