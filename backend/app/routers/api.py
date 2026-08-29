@@ -16,7 +16,7 @@ from ..schemas import (
     QueueAddRequest, ReorderRequest, PlaylistCreate,
 )
 from ..player_engine import player_engine
-from ..bilibili import BilibiliClient, fetch_lrclib_lyrics
+from ..bilibili import BilibiliClient, fetch_lrclib_lyrics, update_dl_progress
 from ..config import settings
 
 router = APIRouter(prefix="/api")
@@ -344,6 +344,8 @@ async def _run_download(song_id: int, bvid: str, track: int = 0, keyword: str = 
             log.info(f"下载完成: {bvid} ({'视频' if s.download_status == 'ready' else '仅音频'}"
                      f"{' 含歌词' if lyrics_json else ' 无歌词'})"
                      f"{' 时长已修正' if actual_dur > 0 else ''}")
+            # 歌词获取完毕后再标记 ready, 避免前端提前显示完成
+            update_dl_progress(bvid, 100, "ready", s.title)
         db.close()
         await player_engine.broadcast_state()
     except Exception as e:

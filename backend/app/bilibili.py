@@ -493,7 +493,6 @@ class BilibiliClient:
                 try:
                     result = subprocess.run(cmd, check=True, capture_output=True, text=True)
                     log.info(f"  合并完成 (尝试{attempt+1})")
-                    update_dl_progress(bvid, 100, "ready", info.title)
                     if not keep_temp:
                         for p in [audio_raw, video_raw, audio_mp4, video_mp4]:
                             if os.path.exists(p):
@@ -506,7 +505,6 @@ class BilibiliClient:
             log.error("  所有合并尝试均失败")
             # 回退: 返回音频
             if os.path.exists(audio_mp4):
-                update_dl_progress(bvid, 100, "ready", info.title)
                 return audio_mp4
 
         # ── 仅音频 ────────────────────────────────
