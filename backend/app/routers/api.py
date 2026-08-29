@@ -252,6 +252,20 @@ async def _ensure_song(bvid: str, db: Session) -> Song:
     return song
 
 
+def _get_video_duration(path: str) -> float:
+    """用 ffprobe 获取视频实际时长(秒)"""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=30,
+        )
+        return float(r.stdout.strip() or 0)
+    except Exception:
+        return 0
+
+
 def _has_video_stream(path: str) -> bool:
     """用 ffprobe 判断文件是否包含视频轨(纯音频时标记 audio_only, 前端显示封面兜底)"""
     import subprocess
@@ -320,11 +334,16 @@ async def _run_download(song_id: int, bvid: str, track: int = 0, keyword: str = 
             s.file_path = path
             s.file_size = size
             s.lyrics = "[]" if track == -1 else lyrics_json
+            # 用 ffprobe 修正时长(B站 video_info 的 duration 字段偶发错误, 如 3 分钟视频返回 54 分钟)
+            actual_dur = _get_video_duration(path)
+            if actual_dur > 0:
+                s.duration = int(actual_dur)
             # 用 ffprobe 判定是否含视频轨；纯音频文件标记为 audio_only
             s.download_status = "ready" if _has_video_stream(path) else "audio_only"
             db.commit()
             log.info(f"下载完成: {bvid} ({'视频' if s.download_status == 'ready' else '仅音频'}"
-                     f"{' 含歌词' if lyrics_json else ' 无歌词'})")
+                     f"{' 含歌词' if lyrics_json else ' 无歌词'})"
+                     f"{' 时长已修正' if actual_dur > 0 else ''}")
         db.close()
         await player_engine.broadcast_state()
     except Exception as e:
