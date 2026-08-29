@@ -257,6 +257,7 @@ body{
     </div>
   </div>
   <div class="section-title" style="padding-bottom:4px">视觉效果</div>
+  <div id="lyricSettingsSection">
   <div class="setting-item">
     <div><div class="si-label">非焦点歌词字号</div><div class="si-desc">未选中行的大小</div></div>
     <div class="si-value" style="display:flex;align-items:center;gap:8px">
@@ -271,6 +272,14 @@ body{
       <input type="range" id="lyricFocusSize" min="16" max="56" value="26" step="1"
              style="width:100px" oninput="document.getElementById('lfsVal').textContent=this.value+'px'; sendLyricSettings()">
       <span id="lfsVal" style="font-size:12px;color:rgba(255,255,255,.5);min-width:32px">26px</span>
+    </div>
+  </div>
+  <div class="setting-item">
+    <div><div class="si-label">阴影大小</div><div class="si-desc">字体阴影的模糊范围</div></div>
+    <div class="si-value" style="display:flex;align-items:center;gap:8px">
+      <input type="range" id="lyricShadowSize" min="0" max="30" value="20" step="1"
+             style="width:100px" oninput="document.getElementById('lssVal').textContent=this.value; sendLyricSettings()">
+      <span id="lssVal" style="font-size:12px;color:rgba(255,255,255,.5);min-width:32px">20</span>
     </div>
   </div>
   <div class="setting-item">
@@ -294,6 +303,7 @@ body{
     <div class="si-value">
       <button class="btn-sm btn-primary" onclick="saveLyricSettings()">保存设置</button>
     </div>
+  </div>
   </div>
   <div class="section-title" style="padding-bottom:4px">关于</div>
   <div class="setting-item">
@@ -367,7 +377,7 @@ ws.onConnect = () => {
 };
 
 // ── 歌词视觉效果设置 ──────────────────────────────
-let lyricSettings = {normal_size:20, focus_size:26, animation:true, focus_mode:'size'};
+let lyricSettings = {normal_size:20, focus_size:26, shadow_size:20, animation:true, focus_mode:'size'};
 
 async function loadLyricSettings() {
   try {
@@ -376,16 +386,19 @@ async function loadLyricSettings() {
   } catch(e) {}
   document.getElementById('lyricNormalSize').value = lyricSettings.normal_size;
   document.getElementById('lyricFocusSize').value = lyricSettings.focus_size;
+  document.getElementById('lyricShadowSize').value = lyricSettings.shadow_size || 20;
   document.getElementById('lyricAnimation').checked = lyricSettings.animation;
   document.getElementById('animLabel').textContent = lyricSettings.animation ? '开启' : '关闭';
   document.getElementById('lnsVal').textContent = lyricSettings.normal_size + 'px';
   document.getElementById('lfsVal').textContent = lyricSettings.focus_size + 'px';
+  document.getElementById('lssVal').textContent = (lyricSettings.shadow_size || 20);
   setFocusMode(lyricSettings.focus_mode);
 }
 
 function sendLyricSettings() {
   lyricSettings.normal_size = parseInt(document.getElementById('lyricNormalSize').value) || 20;
   lyricSettings.focus_size = parseInt(document.getElementById('lyricFocusSize').value) || 26;
+  lyricSettings.shadow_size = parseInt(document.getElementById('lyricShadowSize').value) || 20;
   lyricSettings.animation = document.getElementById('lyricAnimation').checked;
   ws.send({type:'lyric_settings', ...lyricSettings});
 }
@@ -556,6 +569,9 @@ async function syncAdminState() {
 function updateAdminUI() {
   // 点歌页本地歌曲的删除按钮: 仅授权期间可见
   document.querySelectorAll('.ls-del').forEach(b => b.classList.toggle('hidden', !adminState.allowed));
+  // 歌词视觉效果设置: 仅高级操作期间可见可用
+  const ls = document.getElementById('lyricSettingsSection');
+  if (ls) ls.classList.toggle('hidden', !adminState.allowed);
   if (!document.getElementById('adminPanel').classList.contains('hidden')) renderAdminPanel();
 }
 

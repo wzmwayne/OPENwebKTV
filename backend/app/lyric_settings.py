@@ -5,6 +5,7 @@ from .config import settings
 DEFAULTS = {
     "normal_size": 20,
     "focus_size": 26,
+    "shadow_size": 20,
     "animation": True,
     "focus_mode": "size",
 }
