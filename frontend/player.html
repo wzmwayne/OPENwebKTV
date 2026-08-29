@@ -78,6 +78,8 @@ video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:contain}
 /* 关闭字幕动画 */
 .lyric-no-anim .lyric-row{transition:none !important}
 .lyric-no-anim .lyric-row span.slide-in{animation:none}
+/* 歌词预览模式：层级高于 adminOverlay(z:12) */
+.lyric-preview-mode .lyric-row{z-index:13 !important}
 .lyric-row span{display:inline-block}
 .lyric-row span.slide-in{animation:lyricSlide .45s ease}
 @keyframes lyricSlide{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
@@ -490,6 +492,7 @@ function renderAdminOverlay() {
 }
 
 function showLyricPreview() {
+  document.body.classList.add('lyric-preview-mode');
   const r1 = document.getElementById('lyricRow1');
   const r2 = document.getElementById('lyricRow2');
   if (!r1 || !r2) return;
@@ -503,6 +506,7 @@ function showLyricPreview() {
 }
 
 function hideLyricPreview() {
+  document.body.classList.remove('lyric-preview-mode');
   if (!currentSong) {
     document.getElementById('lyricRow1').classList.add('hidden');
     document.getElementById('lyricRow2').classList.add('hidden');
