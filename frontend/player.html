@@ -55,15 +55,30 @@ video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:contain}
 #adminOverlay .ao-ok{font-size:clamp(40px,8vw,90px);color:#8f8;margin-bottom:16px}
 #coverLayer{position:fixed;top:0;left:0;width:100%;height:100%;z-index:2;
   display:flex;align-items:center;justify-content:center;background:#0a0a0f}
+:root{
+  --lyric-normal-size:20px;
+  --lyric-focus-size:26px;
+  --lyric-normal-color:rgba(255,255,255,.7);
+  --lyric-focus-color:#fff;
+  --lyric-focus-shadow:0 2px 4px rgba(0,0,0,.98),0 4px 8px rgba(0,0,0,.95),0 0 20px rgba(0,0,0,.8);
+}
 .lyric-row{position:fixed;z-index:6;white-space:normal;max-width:88vw;font-family:sans-serif;transition:font-size .3s,color .3s;
-  /* 黑色阴影: 多层, 保证在任何画面上可读 */
-  text-shadow:0 2px 4px rgba(0,0,0,.98),0 4px 8px rgba(0,0,0,.95),0 0 20px rgba(0,0,0,.8)}
+  text-shadow:var(--lyric-focus-shadow)}
 #lyricRow1{left:3%;top:66.67%;transform:translateY(-50%);text-align:left;
-  font-size:clamp(20px,3.2vw,40px);color:rgba(255,255,255,.7)}
-#lyricRow1.focus{color:#fff;font-size:clamp(26px,4vw,50px)}
+  font-size:var(--lyric-normal-size);color:var(--lyric-normal-color)}
+#lyricRow1.focus{color:var(--lyric-focus-color);font-size:var(--lyric-focus-size);text-shadow:var(--lyric-focus-shadow)}
 #lyricRow2{right:3%;text-align:right;
-  font-size:clamp(20px,3.2vw,40px);color:rgba(255,255,255,.5)}
-#lyricRow2.focus{color:#fff;font-size:clamp(26px,4vw,50px)}
+  font-size:var(--lyric-normal-size);color:rgba(255,255,255,.5)}
+#lyricRow2.focus{color:var(--lyric-focus-color);font-size:var(--lyric-focus-size);text-shadow:var(--lyric-focus-shadow)}
+/* 颜色对比模式: 焦点行同大小 + 主题紫 + 紫色光晕 */
+.lyric-color-mode #lyricRow1.focus,
+.lyric-color-mode #lyricRow2.focus{
+  font-size:var(--lyric-normal-size);
+  color:#7c5cfc;
+  text-shadow:0 0 15px rgba(124,92,252,.5),0 0 30px rgba(255,255,255,.3);
+}
+/* 关闭字幕动画 */
+.lyric-no-anim .lyric-row span.slide-in{animation:none}
 .lyric-row span{display:inline-block}
 .lyric-row span.slide-in{animation:lyricSlide .45s ease}
 @keyframes lyricSlide{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
@@ -103,6 +118,10 @@ video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:contain}
   <div class="ao-title" id="aoTitle">高级操作验证</div>
   <div class="ao-code" id="aoCode">------</div>
   <div class="ao-sub" id="aoSub">请在控制器输入此验证码</div>
+  <div id="lyricPreview" style="position:relative;width:88vw;margin:0 auto;text-align:center">
+    <div id="lpRow1" style="font-size:var(--lyric-normal-size);color:var(--lyric-normal-color);text-shadow:var(--lyric-focus-shadow);white-space:normal">♪ 第一行示例歌词</div>
+    <div id="lpRow2" style="margin-top:6px;font-size:var(--lyric-normal-size);color:rgba(255,255,255,.5);text-shadow:var(--lyric-focus-shadow);white-space:normal">第二行预览文本</div>
+  </div>
   <div class="ao-count" id="aoCount">剩余 120s</div>
 </div>
 <div class="status-badge" id="statusBadge">未连接</div>
@@ -131,6 +150,9 @@ const MAX_PLAY_RETRIES = 3;
 ws.onConnect = () => {
   document.getElementById('idleScreen').classList.add('hidden');
   document.getElementById('statusBadge').textContent = '已连接';
+  applyLyricSettings({
+    normal_size:20, focus_size:26, animation:true, focus_mode:'size'
+  });
   checkLogin();
 };
 
@@ -330,6 +352,55 @@ function lyricAt(time) {
   return idx;
 }
 
+function applyLyricSettings(s) {
+  const r = document.documentElement.style;
+  const set = (k, v) => r.setProperty('--lyric-' + k, typeof v === 'number' ? v + 'px' : v);
+  set('normal-size', s.normal_size || 20);
+  set('focus-size', s.focus_size || 26);
+  set('normal-color', '#fff');
+  set('focus-color', '#7c5cfc');
+  set('focus-shadow', '0 0 15px rgba(124,92,252,.5),0 0 30px rgba(255,255,255,.3)');
+  if (s.focus_mode === 'size') {
+    set('focus-color', '#fff');
+    set('focus-size', (s.focus_size || 26) + 'px');
+    set('focus-shadow', '0 2px 4px rgba(0,0,0,.98),0 4px 8px rgba(0,0,0,.95),0 0 20px rgba(0,0,0,.8)');
+    document.body.classList.remove('lyric-color-mode');
+    document.body.classList.add('lyric-size-mode');
+  } else {
+    set('focus-size', (s.normal_size || 20) + 'px');
+    set('focus-color', '#7c5cfc');
+    document.body.classList.remove('lyric-size-mode');
+    document.body.classList.add('lyric-color-mode');
+  }
+  if (!s.animation) {
+    document.body.classList.add('lyric-no-anim');
+  } else {
+    document.body.classList.remove('lyric-no-anim');
+  }
+  updateLyricPreview();
+}
+
+function updateLyricPreview() {
+  const s = getComputedStyle(document.documentElement);
+  const r1 = document.getElementById('lpRow1');
+  const r2 = document.getElementById('lpRow2');
+  if (!r1 || !r2) return;
+  r1.style.fontSize = s.getPropertyValue('--lyric-normal-size').trim();
+  r1.style.color = s.getPropertyValue('--lyric-normal-color').trim();
+  r1.style.textShadow = s.getPropertyValue('--lyric-focus-shadow').trim();
+  r2.style.fontSize = s.getPropertyValue('--lyric-normal-size').trim();
+  r2.style.color = 'rgba(255,255,255,.5)';
+  r2.style.textShadow = s.getPropertyValue('--lyric-focus-shadow').trim();
+  if (document.body.classList.contains('lyric-color-mode')) {
+    r1.classList.add('focus');
+    r1.style.fontSize = s.getPropertyValue('--lyric-normal-size').trim();
+    r1.style.color = '#7c5cfc';
+    r1.style.textShadow = '0 0 15px rgba(124,92,252,.5),0 0 30px rgba(255,255,255,.3)';
+  } else {
+    r1.classList.remove('focus');
+  }
+}
+
 function setLyricText(el, text, animate) {
   if (el.textContent === text) return;
   el.textContent = text;
@@ -432,6 +503,9 @@ function onMessage(msg) {
       adminCode = msg.code || '';
       adminTtl = (adminPhase === 'code' ? (msg.code_ttl||0) : (msg.admin_remaining||0));
       renderAdminOverlay();
+      break;
+    case 'lyric_settings':
+      applyLyricSettings(msg);
       break;
     case 'play':
       if (msg.song) loadVideo(msg.song);

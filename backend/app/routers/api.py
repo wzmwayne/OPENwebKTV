@@ -17,6 +17,7 @@ from ..schemas import (
 )
 from ..player_engine import player_engine
 from ..bilibili import BilibiliClient, fetch_lrclib_lyrics, update_dl_progress
+from ..lyric_settings import load_settings, save_settings
 from ..config import settings
 
 router = APIRouter(prefix="/api")
@@ -600,3 +601,18 @@ async def qr_controller(request: Request):
     img.save(buf, format="PNG")
     buf.seek(0)
     return Response(content=buf.getvalue(), media_type="image/png")
+
+
+# ── 歌词视觉效果设置 ────────────────────────────────────
+
+
+@router.get("/settings/lyric")
+async def get_lyric_settings():
+    return load_settings()
+
+
+@router.post("/settings/lyric")
+async def post_lyric_settings(request: Request):
+    data = await request.json()
+    saved = save_settings(data)
+    return saved

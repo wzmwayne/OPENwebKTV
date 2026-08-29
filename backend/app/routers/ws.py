@@ -4,6 +4,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from ..ws_manager import ws_manager
 from ..player_engine import player_engine
 from .. import admin_auth
+from ..lyric_settings import load_settings
 
 
 router = APIRouter()
@@ -20,6 +21,8 @@ async def ws_player(ws: WebSocket):
     ast = admin_auth.status()
     if ast["phase"] in ("code", "active"):
         await ws.send_json({"type": "admin", **admin_auth.status(with_code=True)})
+    # 推送歌词视觉效果设置
+    await ws.send_json({"type": "lyric_settings", **load_settings()})
     try:
         while True:
             raw = await ws.receive_text()
@@ -66,6 +69,10 @@ async def ws_controller(ws: WebSocket):
                 await player_engine.seek(data.get("position", 0))
             elif msg_type == "volume":
                 await player_engine.set_volume(data.get("volume", 0.8))
+            elif msg_type == "lyric_settings":
+                from ..lyric_settings import save_settings
+                saved = save_settings(data)
+                await ws_manager.send_to_players({"type": "lyric_settings", **saved})
 
     except WebSocketDisconnect:
         ws_manager.remove(ws)
