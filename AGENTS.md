@@ -199,7 +199,8 @@ OPENwebKTV/
 - player.html: 高级操作阻塞覆盖层 #adminOverlay(z-12): code 阶段大号8位动态码+TTL倒计时,
   active 阶段显示授权倒计时; 到期/取消自动隐藏回空闲屏; state 的 admin 字段兜底重连;
   **授权结束(active→none)显示「高级操作已结束」2.5s 后自动刷新页面**
-- **player.html 歌词(两行滚动)**: 行1在屏幕高度一半**居左**, 行2在行1下方**居右**, 多层**黑色阴影**
+- **player.html 歌词(两行滚动)**: 两行字号统一为第一行大小(同 clamp(20px,3.2vw,40px)/焦点态 clamp(26px,4vw,50px)),
+  均允许自动换行不截断; 行1在屏幕高度一半**居左**, 行2动态跟随行1底部**居右**, 多层**黑色阴影**
   (0 1px 2px/0 2px 6px/0 0 14px rgba黑); 焦点行=当前句(放大+纯白); 滚动规则(用户指定序列):
   偶数句焦点行1+行2滚入下一句, 奇数句焦点行2+行1滚入下一句
   (验证序列 -1A 2B → 1C -2B → -1C 2D → 1E -2D)。数据源 /api/lyrics/{bvid};
@@ -406,5 +407,13 @@ cd backend && python3 login_server.py
   返回空(播放端行为=下载时选择的歌词, 无存储即无歌词); 显式预览路径保留回落(track>=0 B站轨轨空
   LRCLIB兜底, -2/-3 LRCLIB 不受影响)。已验证: ''歌返回空(原回落57行)/存储歌74行/显式B站轨74行/
   LRCLIB搜索词52行/未下载bvid空。②预览详情页歌词加载UI: `loadDetailLyrics` 文案'加载中...'→
-  **'歌词加载中'** + 新增 **detailLyricsGen 代际守卫**(每次加载/切换换代, 旧请求返回时丢弃,
-  修复快速切轨时"上一轮歌词"覆盖新选择的问题; 与 player.html loadGen 同思路)。
+   **'歌词加载中'** + 新增 **detailLyricsGen 代际守卫**(每次加载/切换换代, 旧请求返回时丢弃,
+   修复快速切轨时"上一轮歌词"覆盖新选择的问题; 与 player.html loadGen 同思路)。
+
+- **2026-08-29 播放端歌词两行统一字号+自动换行**: 原来两行字号不同(行1大/行2小)且
+  `white-space:nowrap` 导致长歌词被截断。修复=①CSS 两行字号统一为 `clamp(20px,3.2vw,40px)`
+  (焦点态 `clamp(26px,4vw,50px)`), 移除 `nowrap/overflow:hidden/ellipsis` 改为 `white-space:normal`
+  允许换行不截断; ②JS 新增 `adjustRow2()` 动态计算行1实际渲染高度(`getBoundingClientRect`),
+  将行2 `top` 设为行1底部+10px 间距, 彻底避免长歌词换行后与行2重叠; ③`loadLyrics` 加载完成后
+  立即调用 `applyLyricIndex(lyricAt(video.currentTime))` 即时显示; ④监听 `resize` 事件同步调整。
+  注意: 行2取消固定 `top:calc(...)` 偏移, 改为 JS 动态设置, 窗口大小改变时自动重算。
