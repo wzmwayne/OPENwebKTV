@@ -12,17 +12,12 @@ log = logging.getLogger("owk.player")
 
 class PlayerEngine:
     def __init__(self):
-        self._current_song: Song | None = None
         self._status: str = "idle"
         self._position: float = 0
         self._volume: float = 0.8
         self._play_lock = asyncio.Lock()
         self._poll_task: asyncio.Task | None = None
         self._dl_broadcast_task: asyncio.Task | None = None
-
-    @property
-    def current_song(self) -> Song | None:
-        return self._current_song
 
     @property
     def status(self) -> str:
@@ -36,18 +31,30 @@ class PlayerEngine:
     def volume(self) -> float:
         return self._volume
 
+    def _playing_item(self, db: Session) -> QueueItem | None:
+        return db.query(QueueItem).filter(QueueItem.status == "playing").order_by(QueueItem.order).first()
+
+    def _ensure_playing_head(self, db: Session):
+        items = db.query(QueueItem).filter(QueueItem.status.in_(["waiting", "playing"])).order_by(QueueItem.order).all()
+        changed = False
+        for i, item in enumerate(items):
+            if i == 0 and item.status != "playing":
+                item.status = "playing"
+                changed = True
+            elif i > 0 and item.status == "playing":
+                item.status = "waiting"
+                changed = True
+        if changed:
+            db.commit()
+
     def get_state(self) -> PlayState:
         db = SessionLocal()
         try:
-            queue = (
-                db.query(QueueItem)
-                .filter(QueueItem.status.in_(["waiting", "playing"]))
-                .order_by(QueueItem.order)
-                .all()
-            )
-            current = self._current_song
+            self._ensure_playing_head(db)
+            queue = db.query(QueueItem).filter(QueueItem.status.in_(["waiting", "playing"])).order_by(QueueItem.order).all()
+            cur = self._playing_item(db)
             return PlayState(
-                current=SongOut.model_validate(current) if current else None,
+                current=SongOut.model_validate(cur.song) if cur and cur.song else None,
                 queue=[QueueOut.model_validate(q) for q in queue if q.song],
                 status=self._status,
                 position=self._position,
@@ -62,7 +69,12 @@ class PlayerEngine:
 
     async def play(self):
         async with self._play_lock:
-            if not self._current_song and not await self._load_next():
+            db = SessionLocal()
+            try:
+                cur = self._playing_item(db)
+            finally:
+                db.close()
+            if not cur and not await self._load_next():
                 log.info("队列为空，无法播放")
                 return
             self._position = 0
@@ -73,7 +85,8 @@ class PlayerEngine:
                 "song": state.current.model_dump() if state.current else None,
             })
             await ws_manager.send_to_controllers({"type": "state", "state": state.model_dump()})
-            log.info(f"▶ 播放: {self._current_song.title if self._current_song else '?'}")
+            if state.current:
+                log.info(f"▶ 播放: {state.current.title}")
 
     async def pause(self):
         self._status = "paused"
@@ -91,13 +104,10 @@ class PlayerEngine:
     async def next(self):
         db = SessionLocal()
         try:
-            if self._current_song:
-                db.query(QueueItem).filter(
-                    QueueItem.song_id == self._current_song.id,
-                    QueueItem.status == "playing",
-                ).update({"status": "played"})
+            cur = self._playing_item(db)
+            if cur:
+                cur.status = "played"
                 db.commit()
-            self._current_song = None
         finally:
             db.close()
         await self.play()
@@ -105,31 +115,36 @@ class PlayerEngine:
     async def prev(self):
         db = SessionLocal()
         try:
-            if self._current_song:
-                db.query(QueueItem).filter(
-                    QueueItem.song_id == self._current_song.id,
-                    QueueItem.status == "playing",
-                ).update({"status": "waiting"})
-                db.commit()
-            prev_item = (
-                db.query(QueueItem)
-                .filter(QueueItem.status == "played")
-                .order_by(QueueItem.order.desc())
-                .first()
-            )
-            if prev_item:
-                prev_item.status = "waiting"
-                db.commit()
-                self._current_song = prev_item.song
-            else:
-                self._current_song = None
+            cur = self._playing_item(db)
+            # 找到上一首：最近一个已播歌曲
+            prev_item = db.query(QueueItem).filter(QueueItem.status == "played").order_by(QueueItem.order.desc()).first()
+            if not prev_item:
+                # 没有上一首，无操作
+                return
+            # 取出当前和上一首，重新排序：上一首放前，当前放后
+            items = db.query(QueueItem).filter(QueueItem.id.in_([cur.id, prev_item.id])).all() if cur else [prev_item]
+            # 标记上一首为 playing，当前为 waiting
+            prev_item.status = "playing"
+            if cur:
+                cur.status = "waiting"
+            # 交换 order 确保 playing 在头部
+            tmp = prev_item.order
+            prev_item.order = cur.order if cur else 0
+            if cur:
+                cur.order = tmp
+            db.commit()
         finally:
             db.close()
-        if self._current_song:
-            await self.play()
-        else:
-            self._status = "idle"
-            await self.broadcast_state()
+        self._position = 0
+        self._status = "playing"
+        state = self.get_state()
+        await ws_manager.send_to_players({
+            "type": "play",
+            "song": state.current.model_dump() if state.current else None,
+        })
+        await ws_manager.send_to_controllers({"type": "state", "state": state.model_dump()})
+        if state.current:
+            log.info(f"▶ 上一首: {state.current.title}")
 
     async def seek(self, position: float):
         self._position = position
@@ -147,16 +162,16 @@ class PlayerEngine:
         await ws_manager.send_to_controllers(msg)
 
     async def on_song_end(self):
+        if self._position < 10:
+            log.warning(f"歌曲播放不足10秒({self._position:.0f}s)，忽略song_end")
+            return
         log.info("当前歌曲结束")
         db = SessionLocal()
         try:
-            if self._current_song:
-                db.query(QueueItem).filter(
-                    QueueItem.song_id == self._current_song.id,
-                    QueueItem.status == "playing",
-                ).update({"status": "played"})
+            cur = self._playing_item(db)
+            if cur:
+                cur.status = "played"
                 db.commit()
-            self._current_song = None
         finally:
             db.close()
         await self.play()
@@ -164,20 +179,13 @@ class PlayerEngine:
             log.info("队列已空，停止播放")
 
     async def add_to_queue(self, song_id: int, db: Session) -> tuple[int | None, str]:
-        count = db.query(QueueItem).filter(
-            QueueItem.status.in_(["waiting", "playing"])
-        ).count()
+        count = db.query(QueueItem).filter(QueueItem.status.in_(["waiting", "playing"])).count()
         if count >= settings.MAX_QUEUE_SIZE:
             return None, "full"
-        existing = db.query(QueueItem).filter(
-            QueueItem.song_id == song_id,
-            QueueItem.status.in_(["waiting", "playing"]),
-        ).first()
+        existing = db.query(QueueItem).filter(QueueItem.song_id == song_id, QueueItem.status.in_(["waiting", "playing"])).first()
         if existing:
             return existing.id, "exists"
-        max_order = db.query(QueueItem).filter(
-            QueueItem.status.in_(["waiting", "playing"])
-        ).order_by(QueueItem.order.desc()).first()
+        max_order = db.query(QueueItem).filter(QueueItem.status.in_(["waiting", "playing"])).order_by(QueueItem.order.desc()).first()
         next_order = (max_order.order + 1) if max_order else 0
         item = QueueItem(song_id=song_id, order=next_order, status="waiting")
         db.add(item)
@@ -193,12 +201,11 @@ class PlayerEngine:
         item = db.query(QueueItem).filter(QueueItem.id == item_id).first()
         if not item:
             return
-        is_current = self._current_song and item.song_id == self._current_song.id and item.status == "playing"
+        was_playing = item.status == "playing"
         db.delete(item)
         db.commit()
         await self.broadcast_state()
-        if is_current:
-            self._current_song = None
+        if was_playing:
             await self.play()
 
     async def reorder_queue(self, order: list[int], db: Session):
@@ -210,19 +217,16 @@ class PlayerEngine:
     async def _load_next(self) -> bool:
         db = SessionLocal()
         try:
-            next_item = (
-                db.query(QueueItem)
-                .filter(QueueItem.status == "waiting")
-                .order_by(QueueItem.order)
-                .first()
-            )
-            if next_item and next_item.song:
-                next_item.status = "playing"
-                db.commit()
-                self._current_song = next_item.song
-                log.info(f"加载下一首: {self._current_song.title}")
+            items = db.query(QueueItem).filter(QueueItem.status.in_(["waiting", "playing"])).order_by(QueueItem.order).all()
+            if not items:
+                return False
+            # 队列首项标记为 playing，其余为 waiting
+            for i, item in enumerate(items):
+                item.status = "playing" if i == 0 else "waiting"
+            db.commit()
+            if items[0].song:
+                log.info(f"加载下一首: {items[0].song.title}")
                 return True
-            self._current_song = None
             return False
         finally:
             db.close()

@@ -5,7 +5,11 @@ dist/
 build/
 *.db
 *.log
+*.mp4
+*.mkv
+*.webm
 backend/data/
+backend/downloads/
 backend/bilibili_cookie.json
 player-android/.gradle/
 player-android/build/

@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>OwK 控制器</title>
 <script src="/js/ws_client.js"></script>
 <style>
@@ -163,6 +166,10 @@ body{
       <button class="btn-sm btn-primary" onclick="openLogin()">打开</button>
     </div>
   </div>
+  <div class="setting-item" style="cursor:pointer" onclick="forceReload()">
+    <div><div class="si-label">强制刷新播放端</div><div class="si-desc">播放器卡顿时使用</div></div>
+    <div class="si-value" style="color:#7c5cfc">⟳</div>
+  </div>
   <div class="section-title" style="padding-bottom:4px">关于</div>
   <div class="setting-item">
     <div><div class="si-label">OPENwebKTV</div><div class="si-desc">版本 0.1.0</div></div>
@@ -252,6 +259,8 @@ async function checkCookie() {
     document.getElementById('cookieStatus').textContent = '✗ 无法连接';
   }
 }
+
+function forceReload() { ws.send({type:'reload'}); showToast('已发送刷新指令'); }
 
 function openLogin() {
   const host = location.hostname;

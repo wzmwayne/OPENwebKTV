@@ -21,24 +21,36 @@ from app.config import settings
 
 if __name__ == "__main__":
     import socket
+    import subprocess
     import sys
 
     host = settings.HOST
     port = settings.PORT
 
-    ports = [port, 8080] if port != 8080 else [8080]
-    chose_port = 0
-    for p in ports:
+    def _try_bind(p: int) -> bool:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 s.bind((host, p))
-                chose_port = p
-                break
+            return True
         except (PermissionError, OSError):
-            continue
+            return False
+
+    ports = [port, 8080] if port != 8080 else [8080]
+    chose_port = 0
+    for p in ports:
+        if _try_bind(p):
+            chose_port = p
+            break
+        print(f"端口 {p} 被占用，尝试自动释放...")
+        subprocess.run(["fuser", "-k", f"{p}/tcp"], capture_output=True)
+        import time
+        time.sleep(1)
+        if _try_bind(p):
+            chose_port = p
+            break
     if not chose_port:
-        print("错误: 所有端口均无法绑定，请检查端口是否被占用")
+        print("错误: 所有端口均无法绑定")
         sys.exit(1)
 
     print()

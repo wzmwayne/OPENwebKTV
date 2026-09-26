@@ -334,7 +334,9 @@ class BilibiliClient:
         output_path = os.path.join(output_dir, f"{base}.mp4")
 
         best_audio = max(pi.audio_streams, key=lambda x: x.bandwidth) if pi.audio_streams else None
-        best_video = max(pi.video_streams, key=lambda x: x["height"]) if pi.video_streams else None
+        # AVC(codecid=7) > AV1(13) > HEVC(12)，同codec内按分辨率
+        codec_pri = {7: 0, 13: 1, 12: 2}
+        best_video = min(pi.video_streams, key=lambda v: (codec_pri.get(v.get("codecid"), 99), -v.get("height", 0))) if pi.video_streams else None
 
         if not best_audio and not best_video:
             raise Exception("无可下载的流")
